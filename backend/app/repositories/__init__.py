@@ -7,7 +7,11 @@ from app.repositories.accounts import (
     InMemoryAccountRepository,
     PostgresAccountRepository,
 )
-from app.repositories.base import DuplicateResourceError, ForbiddenResourceError
+from app.repositories.base import (
+    DuplicateResourceError,
+    ForbiddenResourceError,
+    InvalidReferenceError,
+)
 from app.repositories.categories import (
     CategoryRepository,
     InMemoryCategoryRepository,
@@ -34,21 +38,37 @@ def build_account_repository() -> AccountRepository:
     return InMemoryAccountRepository()
 
 
-def build_transaction_repository() -> TransactionRepository:
+def build_transaction_repository(
+    categories: CategoryRepository | None = None,
+    accounts: AccountRepository | None = None,
+) -> TransactionRepository:
     database_url = getenv("DATABASE_URL")
     if database_url:
         return PostgresTransactionRepository(database_url)
-    return InMemoryTransactionRepository()
+    return InMemoryTransactionRepository(
+        category_repository=categories,
+        account_repository=accounts,
+    )
 
 
 category_repository = build_category_repository()
 account_repository = build_account_repository()
-transaction_repository = build_transaction_repository()
+transaction_repository = build_transaction_repository(category_repository, account_repository)
+if isinstance(transaction_repository, InMemoryTransactionRepository):
+    if isinstance(category_repository, InMemoryCategoryRepository):
+        category_repository.set_delete_callback(
+            transaction_repository.clear_category_reference,
+        )
+    if isinstance(account_repository, InMemoryAccountRepository):
+        account_repository.set_delete_callback(
+            transaction_repository.clear_account_reference,
+        )
 
 
 __all__ = [
     "DuplicateResourceError",
     "ForbiddenResourceError",
+    "InvalidReferenceError",
     "account_repository",
     "build_account_repository",
     "build_category_repository",

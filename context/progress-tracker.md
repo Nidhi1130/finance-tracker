@@ -44,16 +44,24 @@ Update this file after every meaningful implementation change.
   global defaults, validation, duplicate detection, and per-user isolation.
 - Account API supports authenticated create/list/update/delete, normalized
   names, duplicate detection, sorted lists, and per-user isolation.
+- Transaction writes validate category/account ownership, list filtering
+  supports both resources, and resource deletion preserves transactions.
+- PostgreSQL 16 CI coverage exercises RLS, cross-user isolation, reference
+  validation, and delete-to-null behavior with a non-bypass application role.
+- Categories and Accounts pages support authenticated create, list, edit, and
+  delete flows; global categories are read-only and custom category colors are
+  assigned automatically from the approved palette.
+- Local preview origins on ports 3000 and 3100 are covered by CORS regression
+  tests so resource names load correctly during review.
 
 ## In Progress
 
-- Phase 2 transaction reference validation and resource filtering.
+- Phase 2 transaction selectors and category/account list filters.
 
 ## Next Up
 
-- Enforce category/account ownership on transaction writes and add account
-  filtering.
 - Wire Categories, Accounts, and Transactions UI flows.
+- Run frontend lint/build and complete the authenticated UI smoke test.
 - Then tighten the root README and repo metadata to match Finance Flow.
 
 ## Open Questions

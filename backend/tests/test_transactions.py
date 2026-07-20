@@ -1,155 +1,234 @@
 from __future__ import annotations
 
-import base64
-import os
-import json
+from collections.abc import Callable
 from uuid import uuid4
 
-import pytest
 from fastapi.testclient import TestClient
 
-os.environ.pop("DATABASE_URL", None)
-os.environ.pop("SUPABASE_URL", None)
-os.environ.pop("SUPABASE_JWT_SECRET", None)
 
-from app.main import app
-from app.routers.transactions import repository
-
-client = TestClient(app)
+AuthHeaders = Callable[[str], dict[str, str]]
 
 
-def build_bearer_token(user_id: str) -> str:
-    header = base64.urlsafe_b64encode(
-        json.dumps({"alg": "none", "typ": "JWT"}).encode("utf-8"),
-    ).rstrip(b"=").decode("utf-8")
-    payload = base64.urlsafe_b64encode(
-        json.dumps({"sub": user_id}).encode("utf-8"),
-    ).rstrip(b"=").decode("utf-8")
-    return f"{header}.{payload}.signature"
+def create_category(client: TestClient, headers: dict[str, str], name: str) -> dict:
+    response = client.post(
+        "/categories",
+        headers=headers,
+        json={"name": name, "color": "#2563EB"},
+    )
+    assert response.status_code == 201
+    return response.json()
 
 
-def auth_headers(user_id: str = "00000000-0000-0000-0000-000000000001") -> dict[str, str]:
-    return {"Authorization": f"Bearer {build_bearer_token(user_id)}"}
+def create_account(client: TestClient, headers: dict[str, str], name: str) -> dict:
+    response = client.post("/accounts", headers=headers, json={"name": name})
+    assert response.status_code == 201
+    return response.json()
 
 
-@pytest.fixture(autouse=True)
-def clear_repository() -> None:
-    repository.clear()
-
-
-def test_create_list_and_delete_transaction() -> None:
-    user_headers = auth_headers()
-    category_id = str(uuid4())
-    account_id = str(uuid4())
-
-    create_response = client.post(
+def create_transaction(
+    client: TestClient,
+    headers: dict[str, str],
+    *,
+    amount: str = "24.50",
+    tx_type: str = "expense",
+    date: str = "2026-07-13",
+    description: str = "Coffee and lunch",
+    category_id: str | None = None,
+    account_id: str | None = None,
+):
+    return client.post(
         "/transactions",
-        headers=user_headers,
+        headers=headers,
         json={
-            "amount": "24.50",
-            "type": "expense",
-            "date": "2026-07-13",
-            "description": "Coffee and lunch",
+            "amount": amount,
+            "type": tx_type,
+            "date": date,
+            "description": description,
             "category_id": category_id,
             "account_id": account_id,
         },
     )
 
-    assert create_response.status_code == 201
-    created = create_response.json()
+
+def test_create_list_update_and_delete_transaction(
+    client: TestClient,
+    auth_headers: AuthHeaders,
+) -> None:
+    headers = auth_headers()
+    category = create_category(client, headers, "Dining out")
+    account = create_account(client, headers, "Checking")
+    created_response = create_transaction(
+        client,
+        headers,
+        category_id=category["id"],
+        account_id=account["id"],
+    )
+    assert created_response.status_code == 201
+    created = created_response.json()
     assert created["amount"] == "24.50"
-    assert created["type"] == "expense"
-    assert created["category_id"] == category_id
-    assert created["account_id"] == account_id
+    assert created["category_id"] == category["id"]
+    assert created["account_id"] == account["id"]
     assert "user_id" not in created
 
-    transaction_id = created["id"]
+    listed = client.get("/transactions", headers=headers).json()["items"]
+    assert [item["id"] for item in listed] == [created["id"]]
 
-    list_response = client.get("/transactions", headers=user_headers)
-    assert list_response.status_code == 200
-    items = list_response.json()["items"]
-    assert len(items) == 1
-    assert items[0]["id"] == transaction_id
-
-    delete_response = client.delete(f"/transactions/{transaction_id}", headers=user_headers)
-    assert delete_response.status_code == 204
-    assert client.get(f"/transactions/{transaction_id}", headers=user_headers).status_code == 404
-
-
-def test_transaction_list_filters() -> None:
-    user_headers = auth_headers()
-    category_id = str(uuid4())
-
-    client.post(
-        "/transactions",
-        headers=user_headers,
-        json={
-            "amount": "100.00",
-            "type": "income",
-            "date": "2026-07-01",
-            "description": "Salary",
-            "category_id": category_id,
-        },
+    updated = client.put(
+        f"/transactions/{created['id']}",
+        headers=headers,
+        json={"description": "Updated", "amount": "30.00"},
     )
-    client.post(
-        "/transactions",
-        headers=user_headers,
-        json={
-            "amount": "45.00",
-            "type": "expense",
-            "date": "2026-07-02",
-            "description": "Groceries",
-            "category_id": str(uuid4()),
-        },
+    assert updated.status_code == 200
+    assert updated.json()["description"] == "Updated"
+    assert updated.json()["amount"] == "30.00"
+
+    assert client.delete(
+        f"/transactions/{created['id']}", headers=headers
+    ).status_code == 204
+    assert client.get(
+        f"/transactions/{created['id']}", headers=headers
+    ).status_code == 404
+
+
+def test_transaction_list_filters_category_and_account(
+    client: TestClient,
+    auth_headers: AuthHeaders,
+) -> None:
+    headers = auth_headers()
+    salary = next(
+        item
+        for item in client.get("/categories", headers=headers).json()["items"]
+        if item["name"] == "Salary"
+    )
+    groceries = create_category(client, headers, "Weekly groceries")
+    checking = create_account(client, headers, "Checking")
+    savings = create_account(client, headers, "Savings")
+    create_transaction(
+        client,
+        headers,
+        amount="100.00",
+        tx_type="income",
+        date="2026-07-01",
+        description="Salary",
+        category_id=salary["id"],
+        account_id=savings["id"],
+    )
+    create_transaction(
+        client,
+        headers,
+        amount="45.00",
+        date="2026-07-02",
+        description="Groceries",
+        category_id=groceries["id"],
+        account_id=checking["id"],
     )
 
     filtered = client.get(
         "/transactions",
-        headers=user_headers,
+        headers=headers,
         params={
             "from": "2026-07-02",
             "to": "2026-07-31",
             "type": "expense",
-            "category_id": category_id,
+            "category_id": groceries["id"],
+            "account_id": checking["id"],
         },
     )
-
     assert filtered.status_code == 200
-    assert filtered.json()["items"] == []
-
-    by_type = client.get(
+    assert [item["description"] for item in filtered.json()["items"]] == ["Groceries"]
+    assert client.get(
         "/transactions",
-        headers=user_headers,
-        params={"type": "expense"},
-    )
-    assert by_type.status_code == 200
-    assert len(by_type.json()["items"]) == 1
-    assert by_type.json()["items"][0]["description"] == "Groceries"
+        headers=headers,
+        params={"account_id": savings["id"]},
+    ).json()["items"][0]["description"] == "Salary"
 
 
-def test_transaction_validation_rejects_negative_amount_and_bad_type() -> None:
-    user_headers = auth_headers()
+def test_transaction_reference_ownership_is_enforced(
+    client: TestClient,
+    auth_headers: AuthHeaders,
+    user_a_id: str,
+    user_b_id: str,
+) -> None:
+    category = create_category(client, auth_headers(user_b_id), "Private category")
+    account = create_account(client, auth_headers(user_b_id), "Private account")
+    assert create_transaction(
+        client,
+        auth_headers(user_a_id),
+        category_id=category["id"],
+    ).status_code == 422
+    assert create_transaction(
+        client,
+        auth_headers(user_a_id),
+        account_id=account["id"],
+    ).status_code == 422
+    global_id = client.get(
+        "/categories", headers=auth_headers(user_a_id)
+    ).json()["items"][0]["id"]
+    assert create_transaction(
+        client,
+        auth_headers(user_a_id),
+        category_id=global_id,
+    ).status_code == 201
 
-    negative_amount = client.post(
-        "/transactions",
-        headers=user_headers,
-        json={
-            "amount": "-1.00",
-            "type": "expense",
-            "date": "2026-07-13",
-            "description": "Invalid",
-        },
-    )
-    assert negative_amount.status_code == 422
 
-    bad_type = client.post(
-        "/transactions",
-        headers=user_headers,
-        json={
-            "amount": "10.00",
-            "type": "transfer",
-            "date": "2026-07-13",
-            "description": "Invalid",
-        },
-    )
-    assert bad_type.status_code == 422
+def test_transactions_are_isolated_per_user(
+    client: TestClient,
+    auth_headers: AuthHeaders,
+    user_a_id: str,
+    user_b_id: str,
+) -> None:
+    transaction = create_transaction(
+        client,
+        auth_headers(user_a_id),
+        description="Private transaction",
+    ).json()
+    assert client.get(
+        "/transactions", headers=auth_headers(user_b_id)
+    ).json()["items"] == []
+    assert client.get(
+        f"/transactions/{transaction['id']}", headers=auth_headers(user_b_id)
+    ).status_code == 404
+    assert client.put(
+        f"/transactions/{transaction['id']}",
+        headers=auth_headers(user_b_id),
+        json={"description": "Stolen"},
+    ).status_code == 404
+    assert client.delete(
+        f"/transactions/{transaction['id']}", headers=auth_headers(user_b_id)
+    ).status_code == 404
+
+
+def test_deleting_resources_nulls_transaction_references(
+    client: TestClient,
+    auth_headers: AuthHeaders,
+) -> None:
+    headers = auth_headers()
+    category = create_category(client, headers, "Travel")
+    account = create_account(client, headers, "Card")
+    transaction = create_transaction(
+        client,
+        headers,
+        category_id=category["id"],
+        account_id=account["id"],
+    ).json()
+    assert client.delete(f"/categories/{category['id']}", headers=headers).status_code == 204
+    assert client.delete(f"/accounts/{account['id']}", headers=headers).status_code == 204
+    fetched = client.get(f"/transactions/{transaction['id']}", headers=headers).json()
+    assert fetched["category_id"] is None
+    assert fetched["account_id"] is None
+
+
+def test_transaction_validation_and_bad_ids(
+    client: TestClient,
+    auth_headers: AuthHeaders,
+) -> None:
+    headers = auth_headers()
+    assert create_transaction(client, headers, amount="-1.00").status_code == 422
+    assert create_transaction(client, headers, tx_type="transfer").status_code == 422
+    assert create_transaction(
+        client,
+        headers,
+        category_id=str(uuid4()),
+    ).status_code == 422
+    assert client.get("/transactions/not-a-uuid", headers=headers).status_code == 422
+    assert client.get(f"/transactions/{uuid4()}", headers=headers).status_code == 404

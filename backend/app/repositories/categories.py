@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from collections.abc import Callable
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -63,6 +64,8 @@ class CategoryRepository(Protocol):
 
     def delete(self, user_id: UUID, category_id: UUID) -> bool: ...
 
+    def is_accessible(self, user_id: UUID, category_id: UUID) -> bool: ...
+
     def clear(self) -> None: ...
 
 
@@ -70,6 +73,7 @@ class CategoryRepository(Protocol):
 class InMemoryCategoryRepository:
     _items: dict[UUID, dict[UUID, CategoryRecord]] = field(default_factory=dict)
     _globals: dict[UUID, CategoryRecord] = field(init=False)
+    _on_delete: Callable[[UUID, UUID], None] | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -134,7 +138,15 @@ class InMemoryCategoryRepository:
         if category_id not in records:
             return False
         del records[category_id]
+        if self._on_delete is not None:
+            self._on_delete(user_id, category_id)
         return True
+
+    def is_accessible(self, user_id: UUID, category_id: UUID) -> bool:
+        return self.get(user_id, category_id) is not None
+
+    def set_delete_callback(self, callback: Callable[[UUID, UUID], None]) -> None:
+        self._on_delete = callback
 
     def clear(self) -> None:
         self._items.clear()
@@ -228,6 +240,9 @@ class PostgresCategoryRepository:
                 (category_id, user_id),
             )
         return result.rowcount > 0
+
+    def is_accessible(self, user_id: UUID, category_id: UUID) -> bool:
+        return self.get(user_id, category_id) is not None
 
     def clear(self) -> None:
         return None

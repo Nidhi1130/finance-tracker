@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from collections.abc import Callable
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -38,12 +39,15 @@ class AccountRepository(Protocol):
 
     def delete(self, user_id: UUID, account_id: UUID) -> bool: ...
 
+    def is_accessible(self, user_id: UUID, account_id: UUID) -> bool: ...
+
     def clear(self) -> None: ...
 
 
 @dataclass
 class InMemoryAccountRepository:
     _items: dict[UUID, dict[UUID, AccountRecord]] = field(default_factory=dict)
+    _on_delete: Callable[[UUID, UUID], None] | None = field(default=None, init=False)
 
     def list(self, user_id: UUID) -> list[AccountRecord]:
         return sorted(
@@ -91,7 +95,15 @@ class InMemoryAccountRepository:
         if account_id not in records:
             return False
         del records[account_id]
+        if self._on_delete is not None:
+            self._on_delete(user_id, account_id)
         return True
+
+    def is_accessible(self, user_id: UUID, account_id: UUID) -> bool:
+        return self.get(user_id, account_id) is not None
+
+    def set_delete_callback(self, callback: Callable[[UUID, UUID], None]) -> None:
+        self._on_delete = callback
 
     def clear(self) -> None:
         self._items.clear()
@@ -175,6 +187,9 @@ class PostgresAccountRepository:
                 (account_id, user_id),
             )
         return result.rowcount > 0
+
+    def is_accessible(self, user_id: UUID, account_id: UUID) -> bool:
+        return self.get(user_id, account_id) is not None
 
     def clear(self) -> None:
         return None
