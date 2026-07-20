@@ -76,9 +76,13 @@ export function ResourceManager({
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ResourceItem | null>(null);
   const enabled = !configured || Boolean(session);
+  const resourceQueryKey = [
+    endpoint.slice(1),
+    session?.user.id ?? "development-user",
+  ] as const;
 
   const listQuery = useQuery({
-    queryKey: [endpoint.slice(1)],
+    queryKey: resourceQueryKey,
     enabled,
     queryFn: async () => (await requestJson<ListResponse>(endpoint)).items,
   });
@@ -99,7 +103,10 @@ export function ResourceManager({
       }),
     onSuccess: async () => {
       setEditor(null);
-      await queryClient.invalidateQueries({ queryKey: [endpoint.slice(1)] });
+      await queryClient.invalidateQueries({
+        queryKey: resourceQueryKey,
+        exact: true,
+      });
     },
   });
 
@@ -108,7 +115,10 @@ export function ResourceManager({
       requestJson<null>(`${endpoint}/${item.id}`, { method: "DELETE" }),
     onSuccess: async () => {
       setDeleteTarget(null);
-      await queryClient.invalidateQueries({ queryKey: [endpoint.slice(1)] });
+      await queryClient.invalidateQueries({
+        queryKey: resourceQueryKey,
+        exact: true,
+      });
       await queryClient.invalidateQueries({ queryKey: ["transactions"] });
     },
   });
