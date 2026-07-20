@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -8,8 +7,8 @@ from typing import Protocol
 from uuid import UUID, uuid4
 
 import psycopg
-from psycopg.rows import dict_row
 
+from app.repositories.base import database_session
 from app.schemas import TransactionCreate, TransactionOut, TxType, TransactionUpdate
 
 
@@ -159,16 +158,6 @@ class InMemoryTransactionRepository:
 class PostgresTransactionRepository:
     database_url: str
 
-    @contextmanager
-    def _session(self, user_id: UUID):
-        with psycopg.connect(self.database_url, row_factory=dict_row) as connection:
-            with connection.transaction():
-                connection.execute(
-                    "select set_config('app.user_id', %s, true)",
-                    (str(user_id),),
-                )
-                yield connection
-
     @staticmethod
     def _record_from_row(row: dict[str, object]) -> TransactionRecord:
         return TransactionRecord(
@@ -233,7 +222,7 @@ class PostgresTransactionRepository:
             order by date desc, created_at desc
         """
 
-        with self._session(user_id) as connection:
+        with database_session(self.database_url, user_id) as connection:
             rows = connection.execute(query, params).fetchall()
         return [self._record_from_row(row) for row in rows]
 
@@ -264,7 +253,7 @@ class PostgresTransactionRepository:
             payload.category_id,
             payload.account_id,
         )
-        with self._session(user_id) as connection:
+        with database_session(self.database_url, user_id) as connection:
             row = connection.execute(query, params).fetchone()
         assert row is not None
         return self._record_from_row(row)
@@ -276,7 +265,7 @@ class PostgresTransactionRepository:
             from transactions
             where id = %s and user_id = current_setting('app.user_id')::uuid
         """
-        with self._session(user_id) as connection:
+        with database_session(self.database_url, user_id) as connection:
             row = connection.execute(query, (transaction_id,)).fetchone()
         if row is None:
             return None
@@ -324,7 +313,7 @@ class PostgresTransactionRepository:
             returning id, user_id, amount, type, description, date,
                       category_id, account_id, created_at, updated_at
         """
-        with self._session(user_id) as connection:
+        with database_session(self.database_url, user_id) as connection:
             row = connection.execute(query, params).fetchone()
         if row is None:
             return None
@@ -335,7 +324,7 @@ class PostgresTransactionRepository:
             delete from transactions
             where id = %s and user_id = current_setting('app.user_id')::uuid
         """
-        with self._session(user_id) as connection:
+        with database_session(self.database_url, user_id) as connection:
             result = connection.execute(query, (transaction_id,))
         return result.rowcount > 0
 

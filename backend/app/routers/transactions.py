@@ -6,11 +6,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.dependencies import get_current_user_id
-from app.repositories import build_transaction_repository
+from app.repositories import transaction_repository
 from app.schemas import TransactionCreate, TransactionListResponse, TransactionOut, TxType, TransactionUpdate
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
-repository = build_transaction_repository()
+repository = transaction_repository
 
 
 @router.get("", response_model=TransactionListResponse)

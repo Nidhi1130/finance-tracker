@@ -38,15 +38,18 @@ Update this file after every meaningful implementation change.
   network with real create/read/delete behavior.
 - Root context remains the single source of truth for feature specs and
   progress tracking.
+- Phase 2 data model, stable global defaults, forced RLS policies, reference
+  ownership trigger, and additive migration are implemented.
+- Category API supports authenticated create/list/update/delete, immutable
+  global defaults, validation, duplicate detection, and per-user isolation.
 
 ## In Progress
 
-- Phase 2 data model, stable global defaults, forced RLS policies, reference
-  ownership trigger, and additive migration.
+- Phase 2 account CRUD and transaction reference integration.
 
 ## Next Up
 
-- Build category and account APIs with per-user tests.
+- Build the account API with per-user tests.
 - Wire Categories, Accounts, and Transactions UI flows.
 - Then tighten the root README and repo metadata to match Finance Flow.
 
