@@ -1,0 +1,16 @@
+.shell {
+  min-height: 100vh;
+  padding: 32px;
+}
+
+.centered {
+  display: grid;
+  place-items: center;
+}
+
+@media (max-width: 640px) {
+  .shell {
+    padding: 20px;
+  }
+}
+

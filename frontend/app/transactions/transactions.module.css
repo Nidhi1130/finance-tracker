@@ -1,0 +1,147 @@
+.grid {
+  display: grid;
+  gap: 24px;
+}
+
+.panel {
+  display: grid;
+  gap: 20px;
+}
+
+.header,
+.formHeader {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+}
+
+.title,
+.sectionTitle {
+  margin: 0;
+  line-height: 1.1;
+}
+
+.title {
+  font-size: clamp(1.8rem, 3vw, 2.6rem);
+}
+
+.sectionTitle {
+  font-size: 1.2rem;
+}
+
+.subtitle,
+.helper {
+  margin: 10px 0 0;
+  max-width: 65ch;
+  color: var(--text-muted);
+}
+
+.filters,
+.formGrid,
+.formActions {
+  display: grid;
+  gap: 12px;
+}
+
+.filters {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.formGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.select {
+  width: 100%;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  padding: 12px 14px;
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.table th,
+.table td {
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--border-default);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.amountCol {
+  text-align: right;
+}
+
+.rowActions {
+  display: flex;
+  gap: 8px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.income {
+  background: rgba(22, 163, 74, 0.12);
+  color: var(--state-success);
+}
+
+.expense {
+  background: rgba(220, 38, 38, 0.12);
+  color: var(--state-error);
+}
+
+.error {
+  margin: 0;
+  color: var(--state-error);
+  font-weight: 600;
+}
+
+.empty {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.86rem;
+}
+
+@media (max-width: 960px) {
+  .header,
+  .formHeader {
+    flex-direction: column;
+  }
+
+  .filters,
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+}

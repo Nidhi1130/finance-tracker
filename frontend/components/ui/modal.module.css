@@ -1,0 +1,52 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(17, 24, 39, 0.45);
+  z-index: 50;
+}
+
+.modal {
+  width: min(100%, 640px);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  box-shadow: 0 24px 80px rgba(17, 24, 39, 0.2);
+  padding: 24px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: start;
+  margin-bottom: 20px;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.description {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+}
+
+.closeButton {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.content {
+  display: grid;
+  gap: 16px;
+}
+

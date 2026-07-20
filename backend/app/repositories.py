@@ -1,0 +1,354 @@
+from __future__ import annotations
+
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
+from decimal import Decimal
+from typing import Protocol
+from uuid import UUID, uuid4
+
+import psycopg
+from psycopg.rows import dict_row
+
+from app.schemas import TransactionCreate, TransactionOut, TxType, TransactionUpdate
+
+
+@dataclass
+class TransactionRecord:
+    id: UUID
+    user_id: UUID
+    amount: Decimal
+    type: TxType
+    description: str | None
+    date: date
+    category_id: UUID | None
+    account_id: UUID | None
+    created_at: datetime
+    updated_at: datetime
+
+    def to_out(self) -> TransactionOut:
+        return TransactionOut.model_validate(
+            {
+                "id": self.id,
+                "amount": self.amount,
+                "type": self.type,
+                "description": self.description,
+                "date": self.date,
+                "category_id": self.category_id,
+                "account_id": self.account_id,
+                "created_at": self.created_at,
+                "updated_at": self.updated_at,
+            },
+        )
+
+
+class TransactionRepository(Protocol):
+    def list(
+        self,
+        user_id: UUID,
+        *,
+        tx_type: TxType | None = None,
+        category_id: UUID | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> list[TransactionRecord]: ...
+
+    def create(self, user_id: UUID, payload: TransactionCreate) -> TransactionRecord: ...
+
+    def get(self, user_id: UUID, transaction_id: UUID) -> TransactionRecord | None: ...
+
+    def update(
+        self,
+        user_id: UUID,
+        transaction_id: UUID,
+        payload: TransactionUpdate,
+    ) -> TransactionRecord | None: ...
+
+    def delete(self, user_id: UUID, transaction_id: UUID) -> bool: ...
+
+    def clear(self) -> None: ...
+
+
+@dataclass
+class InMemoryTransactionRepository:
+    _items: dict[UUID, dict[UUID, TransactionRecord]] = field(default_factory=dict)
+
+    def list(
+        self,
+        user_id: UUID,
+        *,
+        tx_type: TxType | None = None,
+        category_id: UUID | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> list[TransactionRecord]:
+        records = list(self._items.get(user_id, {}).values())
+        filtered: list[TransactionRecord] = []
+
+        for record in records:
+            if tx_type and record.type != tx_type:
+                continue
+            if category_id is not None and record.category_id != category_id:
+                continue
+            if date_from and record.date < date_from:
+                continue
+            if date_to and record.date > date_to:
+                continue
+            filtered.append(record)
+
+        return sorted(filtered, key=lambda item: (item.date, item.created_at), reverse=True)
+
+    def create(self, user_id: UUID, payload: TransactionCreate) -> TransactionRecord:
+        now = datetime.now(tz=timezone.utc)
+        record = TransactionRecord(
+            id=uuid4(),
+            user_id=user_id,
+            amount=payload.amount,
+            type=payload.type,
+            description=payload.description,
+            date=payload.date,
+            category_id=payload.category_id,
+            account_id=payload.account_id,
+            created_at=now,
+            updated_at=now,
+        )
+        self._items.setdefault(user_id, {})[record.id] = record
+        return record
+
+    def get(self, user_id: UUID, transaction_id: UUID) -> TransactionRecord | None:
+        return self._items.get(user_id, {}).get(transaction_id)
+
+    def update(
+        self,
+        user_id: UUID,
+        transaction_id: UUID,
+        payload: TransactionUpdate,
+    ) -> TransactionRecord | None:
+        record = self.get(user_id, transaction_id)
+        if record is None:
+            return None
+
+        data = payload.model_dump(exclude_unset=True)
+        if "amount" in data:
+            record.amount = data["amount"]
+        if "type" in data:
+            record.type = data["type"]
+        if "description" in data:
+            record.description = data["description"]
+        if "date" in data:
+            record.date = data["date"]
+        if "category_id" in data:
+            record.category_id = data["category_id"]
+        if "account_id" in data:
+            record.account_id = data["account_id"]
+        record.updated_at = datetime.now(tz=timezone.utc)
+        return record
+
+    def delete(self, user_id: UUID, transaction_id: UUID) -> bool:
+        user_items = self._items.get(user_id)
+        if not user_items or transaction_id not in user_items:
+            return False
+        del user_items[transaction_id]
+        return True
+
+    def clear(self) -> None:
+        self._items.clear()
+
+
+@dataclass
+class PostgresTransactionRepository:
+    database_url: str
+
+    @contextmanager
+    def _session(self, user_id: UUID):
+        with psycopg.connect(self.database_url, row_factory=dict_row) as connection:
+            with connection.transaction():
+                connection.execute(
+                    "select set_config('app.user_id', %s, true)",
+                    (str(user_id),),
+                )
+                yield connection
+
+    @staticmethod
+    def _record_from_row(row: dict[str, object]) -> TransactionRecord:
+        return TransactionRecord(
+            id=UUID(str(row["id"])),
+            user_id=UUID(str(row["user_id"])),
+            amount=row["amount"],
+            type=TxType(str(row["type"])),
+            description=row["description"],
+            date=row["date"],
+            category_id=UUID(str(row["category_id"])) if row["category_id"] else None,
+            account_id=UUID(str(row["account_id"])) if row["account_id"] else None,
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    @staticmethod
+    def _row_to_out(row: dict[str, object]) -> TransactionOut:
+        return TransactionOut.model_validate(
+            {
+                "id": UUID(str(row["id"])),
+                "amount": row["amount"],
+                "type": TxType(str(row["type"])),
+                "description": row["description"],
+                "date": row["date"],
+                "category_id": UUID(str(row["category_id"])) if row["category_id"] else None,
+                "account_id": UUID(str(row["account_id"])) if row["account_id"] else None,
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            },
+        )
+
+    def list(
+        self,
+        user_id: UUID,
+        *,
+        tx_type: TxType | None = None,
+        category_id: UUID | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> list[TransactionRecord]:
+        conditions = ["user_id = current_setting('app.user_id')::uuid"]
+        params: list[object] = []
+
+        if tx_type is not None:
+            conditions.append("type = %s")
+            params.append(tx_type.value)
+        if category_id is not None:
+            conditions.append("category_id = %s")
+            params.append(category_id)
+        if date_from is not None:
+            conditions.append("date >= %s")
+            params.append(date_from)
+        if date_to is not None:
+            conditions.append("date <= %s")
+            params.append(date_to)
+
+        query = f"""
+            select id, user_id, amount, type, description, date,
+                   category_id, account_id, created_at, updated_at
+            from transactions
+            where {" and ".join(conditions)}
+            order by date desc, created_at desc
+        """
+
+        with self._session(user_id) as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [self._record_from_row(row) for row in rows]
+
+    def create(self, user_id: UUID, payload: TransactionCreate) -> TransactionRecord:
+        query = """
+            insert into transactions (
+                id,
+                user_id,
+                amount,
+                type,
+                description,
+                date,
+                category_id,
+                account_id
+            )
+            values (%s, %s, %s, %s, %s, %s, %s, %s)
+            returning id, user_id, amount, type, description, date,
+                      category_id, account_id, created_at, updated_at
+        """
+
+        params = (
+            uuid4(),
+            user_id,
+            payload.amount,
+            payload.type.value,
+            payload.description,
+            payload.date,
+            payload.category_id,
+            payload.account_id,
+        )
+        with self._session(user_id) as connection:
+            row = connection.execute(query, params).fetchone()
+        assert row is not None
+        return self._record_from_row(row)
+
+    def get(self, user_id: UUID, transaction_id: UUID) -> TransactionRecord | None:
+        query = """
+            select id, user_id, amount, type, description, date,
+                   category_id, account_id, created_at, updated_at
+            from transactions
+            where id = %s and user_id = current_setting('app.user_id')::uuid
+        """
+        with self._session(user_id) as connection:
+            row = connection.execute(query, (transaction_id,)).fetchone()
+        if row is None:
+            return None
+        return self._record_from_row(row)
+
+    def update(
+        self,
+        user_id: UUID,
+        transaction_id: UUID,
+        payload: TransactionUpdate,
+    ) -> TransactionRecord | None:
+        data = payload.model_dump(exclude_unset=True)
+        if not data:
+            return self.get(user_id, transaction_id)
+
+        assignments: list[str] = []
+        params: list[object] = []
+
+        if "amount" in data:
+            assignments.append("amount = %s")
+            params.append(data["amount"])
+        if "type" in data:
+            assignments.append("type = %s")
+            params.append(data["type"].value)
+        if "description" in data:
+            assignments.append("description = %s")
+            params.append(data["description"])
+        if "date" in data:
+            assignments.append("date = %s")
+            params.append(data["date"])
+        if "category_id" in data:
+            assignments.append("category_id = %s")
+            params.append(data["category_id"])
+        if "account_id" in data:
+            assignments.append("account_id = %s")
+            params.append(data["account_id"])
+
+        assignments.append("updated_at = now()")
+        params.extend([transaction_id, user_id])
+
+        query = f"""
+            update transactions
+            set {", ".join(assignments)}
+            where id = %s and user_id = %s
+            returning id, user_id, amount, type, description, date,
+                      category_id, account_id, created_at, updated_at
+        """
+        with self._session(user_id) as connection:
+            row = connection.execute(query, params).fetchone()
+        if row is None:
+            return None
+        return self._record_from_row(row)
+
+    def delete(self, user_id: UUID, transaction_id: UUID) -> bool:
+        query = """
+            delete from transactions
+            where id = %s and user_id = current_setting('app.user_id')::uuid
+        """
+        with self._session(user_id) as connection:
+            result = connection.execute(query, (transaction_id,))
+        return result.rowcount > 0
+
+    def clear(self) -> None:
+        with psycopg.connect(self.database_url) as connection:
+            with connection.transaction():
+                connection.execute("delete from transactions")
+
+
+def build_transaction_repository() -> TransactionRepository:
+    from os import getenv
+
+    database_url = getenv("DATABASE_URL")
+    if database_url:
+        return PostgresTransactionRepository(database_url)
+    return InMemoryTransactionRepository()
