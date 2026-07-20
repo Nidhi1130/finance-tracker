@@ -92,3 +92,25 @@ class CategoryOut(BaseModel):
 
 class CategoryListResponse(BaseModel):
     items: list[CategoryOut]
+
+
+class AccountCreate(BaseModel):
+    name: str
+
+    _normalize_name = field_validator("name")(normalize_name)
+
+
+class AccountUpdate(BaseModel):
+    name: str
+
+    _normalize_name = field_validator("name")(normalize_name)
+
+
+class AccountOut(BaseModel):
+    id: UUID
+    name: str
+    created_at: datetime
+
+
+class AccountListResponse(BaseModel):
+    items: list[AccountOut]

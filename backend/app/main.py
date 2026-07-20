@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.routers.accounts import router as accounts_router
 from app.routers.categories import router as categories_router
 from app.routers.transactions import router as transactions_router
 
@@ -29,3 +30,4 @@ def health_check() -> dict[str, str]:
 
 app.include_router(transactions_router)
 app.include_router(categories_router)
+app.include_router(accounts_router)

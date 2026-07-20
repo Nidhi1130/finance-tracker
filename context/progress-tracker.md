@@ -42,14 +42,17 @@ Update this file after every meaningful implementation change.
   ownership trigger, and additive migration are implemented.
 - Category API supports authenticated create/list/update/delete, immutable
   global defaults, validation, duplicate detection, and per-user isolation.
+- Account API supports authenticated create/list/update/delete, normalized
+  names, duplicate detection, sorted lists, and per-user isolation.
 
 ## In Progress
 
-- Phase 2 account CRUD and transaction reference integration.
+- Phase 2 transaction reference validation and resource filtering.
 
 ## Next Up
 
-- Build the account API with per-user tests.
+- Enforce category/account ownership on transaction writes and add account
+  filtering.
 - Wire Categories, Accounts, and Transactions UI flows.
 - Then tighten the root README and repo metadata to match Finance Flow.
 
