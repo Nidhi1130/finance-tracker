@@ -4,12 +4,12 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Phase 1 — Core finance workflows. Complete.
+- Phase 2 — Categories & Accounts. In progress.
 
 ## Current Goal
 
-- Phase 1 is complete. Next up is the categories/accounts expansion and
-  the deeper auth flow.
+- Deliver the locked Phase 2 data model, authenticated category/account CRUD,
+  transaction selectors and filters, isolation tests, and UI smoke coverage.
 
 ## Completed
 
@@ -41,13 +41,14 @@ Update this file after every meaningful implementation change.
 
 ## In Progress
 
-- None.
+- Phase 2 data model, stable global defaults, forced RLS policies, reference
+  ownership trigger, and additive migration.
 
 ## Next Up
 
-- Start the next phase slice: categories, accounts, and auth flows.
-- Then tighten the root README and repo metadata to match the current
-  Finance Flow branding and project summary.
+- Build category and account APIs with per-user tests.
+- Wire Categories, Accounts, and Transactions UI flows.
+- Then tighten the root README and repo metadata to match Finance Flow.
 
 ## Open Questions
 
@@ -57,9 +58,6 @@ Update this file after every meaningful implementation change.
   — decide before Phase 5. All free tiers may cold-start after idle.
 - **LLM provider (Phase 4):** Anthropic vs. OpenAI. Decide before Phase 4;
   keep rule-based categorization primary to keep cost near zero.
-- **Accounts entity timing:** the current agenda keeps accounts optional
-  in this slice. Create the table shape now, but defer full accounts UI
-  and CRUD until a later phase.
 
 ## Architecture Decisions
 
