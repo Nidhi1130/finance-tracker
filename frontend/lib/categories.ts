@@ -12,6 +12,10 @@ interface CategoryListResponse {
   items: Category[];
 }
 
+export function categoryQueryKey(userId: string) {
+  return ["categories", userId] as const;
+}
+
 export async function listCategories(): Promise<Category[]> {
   return (await requestJson<CategoryListResponse>("/categories")).items;
 }

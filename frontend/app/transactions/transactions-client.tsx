@@ -8,7 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { buildApiHeaders, buildApiUrl } from "@/lib/api";
+import { requestJson } from "@/lib/api";
+import { accountQueryKey, listAccounts } from "@/lib/accounts";
+import { categoryQueryKey, listCategories } from "@/lib/categories";
 import { cn } from "@/lib/cn";
 import { useAuth } from "@/components/auth/auth-provider";
 import styles from "./transactions.module.css";
@@ -45,6 +47,7 @@ interface TransactionFilters {
   to: string;
   type: "" | TxType;
   categoryId: string;
+  accountId: string;
 }
 
 interface TransactionPayload {
@@ -72,26 +75,8 @@ const initialFilters: TransactionFilters = {
   to: "",
   type: "",
   categoryId: "",
+  accountId: "",
 };
-
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers = await buildApiHeaders(init?.headers);
-  const response = await fetch(buildApiUrl(path), {
-    ...init,
-    headers,
-  });
-
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || "Request failed");
-  }
-
-  if (response.status === 204) {
-    return null as T;
-  }
-
-  return (await response.json()) as T;
-}
 
 function buildQueryString(filters: TransactionFilters): string {
   const params = new URLSearchParams();
@@ -99,6 +84,7 @@ function buildQueryString(filters: TransactionFilters): string {
   if (filters.to) params.set("to", filters.to);
   if (filters.type) params.set("type", filters.type);
   if (filters.categoryId) params.set("category_id", filters.categoryId);
+  if (filters.accountId) params.set("account_id", filters.accountId);
   return params.toString();
 }
 
@@ -125,10 +111,12 @@ export function TransactionsClient() {
   const [form, setForm] = useState<TransactionFormState>(initialFormState);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [filters, setFilters] = useState<TransactionFilters>(initialFilters);
+  const userId = session?.user.id ?? "development-user";
+  const enabled = !configured || Boolean(session);
 
   const transactionsQuery = useQuery({
-    queryKey: ["transactions", filters],
-    enabled: !configured || Boolean(session),
+    queryKey: ["transactions", userId, filters],
+    enabled,
     queryFn: async () => {
       const queryString = buildQueryString(filters);
       const response = await requestJson<TransactionListResponse>(
@@ -136,6 +124,18 @@ export function TransactionsClient() {
       );
       return response.items;
     },
+  });
+
+  const categoriesQuery = useQuery({
+    queryKey: categoryQueryKey(userId),
+    enabled,
+    queryFn: listCategories,
+  });
+
+  const accountsQuery = useQuery({
+    queryKey: accountQueryKey(userId),
+    enabled,
+    queryFn: listAccounts,
   });
 
   const saveMutation = useMutation({
@@ -159,7 +159,7 @@ export function TransactionsClient() {
     onSuccess: async () => {
       setForm(initialFormState);
       setEditingTransaction(null);
-      await queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      await queryClient.invalidateQueries({ queryKey: ["transactions", userId] });
     },
   });
 
@@ -170,13 +170,21 @@ export function TransactionsClient() {
       });
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      await queryClient.invalidateQueries({ queryKey: ["transactions", userId] });
     },
   });
 
   const items = transactionsQuery.data ?? [];
+  const categories = useMemo(
+    () => categoriesQuery.data ?? [],
+    [categoriesQuery.data],
+  );
+  const accounts = useMemo(
+    () => accountsQuery.data ?? [],
+    [accountsQuery.data],
+  );
   const loading = transactionsQuery.isLoading;
-  const errorMessage =
+  const requestErrorMessage =
     transactionsQuery.error instanceof Error
       ? transactionsQuery.error.message
       : saveMutation.error instanceof Error
@@ -184,9 +192,25 @@ export function TransactionsClient() {
         : deleteMutation.error instanceof Error
           ? deleteMutation.error.message
           : null;
+  const resourceErrorMessage =
+    categoriesQuery.error instanceof Error
+      ? categoriesQuery.error.message
+      : accountsQuery.error instanceof Error
+        ? accountsQuery.error.message
+        : null;
+  const errorMessage = requestErrorMessage ?? resourceErrorMessage;
   const isSaving = saveMutation.isPending;
   const isDeleting = deleteMutation.isPending;
   const isEditing = editingTransaction !== null;
+  const referencesLoading = categoriesQuery.isLoading || accountsQuery.isLoading;
+  const categoryNames = useMemo(
+    () => new Map(categories.map((category) => [category.id, category.name])),
+    [categories],
+  );
+  const accountNames = useMemo(
+    () => new Map(accounts.map((account) => [account.id, account.name])),
+    [accounts],
+  );
 
   async function handleSignInRedirect() {
     router.push("/login");
@@ -202,6 +226,10 @@ export function TransactionsClient() {
   function resetForm() {
     setForm(initialFormState);
     setEditingTransaction(null);
+  }
+
+  function clearFilters() {
+    setFilters(initialFilters);
   }
 
   function startEdit(transaction: Transaction) {
@@ -323,14 +351,39 @@ export function TransactionsClient() {
                 <option value="income">Income</option>
                 <option value="expense">Expense</option>
               </select>
-              <Input
-                aria-label="Filter by category id"
-                placeholder="Filter by category UUID"
+              <select
+                aria-label="Filter by category"
+                className={styles.select}
                 value={filters.categoryId}
                 onChange={(event) =>
                   setFilters((current) => ({ ...current, categoryId: event.target.value }))
                 }
-              />
+              >
+                <option value="">All categories</option>
+                {categories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                aria-label="Filter by account"
+                className={styles.select}
+                value={filters.accountId}
+                onChange={(event) =>
+                  setFilters((current) => ({ ...current, accountId: event.target.value }))
+                }
+              >
+                <option value="">All accounts</option>
+                {accounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.name}
+                  </option>
+                ))}
+              </select>
+              <Button onClick={clearFilters} type="button" variant="secondary">
+                Clear filters
+              </Button>
             </div>
 
             {errorMessage ? <p className={styles.error}>{errorMessage}</p> : null}
@@ -343,54 +396,63 @@ export function TransactionsClient() {
                     <tr>
                       <th>Date</th>
                       <th>Description</th>
-                      <th>Category ID</th>
-                      <th>Account ID</th>
+                      <th>Category</th>
+                      <th>Account</th>
                       <th>Type</th>
                       <th className={styles.amountCol}>Amount</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((item) => (
-                      <tr key={item.id}>
-                        <td>{item.date}</td>
-                        <td>{item.description ?? "—"}</td>
-                        <td className={styles.mono}>{item.category_id ?? "—"}</td>
-                        <td className={styles.mono}>{item.account_id ?? "—"}</td>
-                        <td>
-                          <span
-                            className={cn(
-                              styles.pill,
-                              item.type === "income" ? styles.income : styles.expense,
-                            )}
-                          >
-                            {item.type}
-                          </span>
-                        </td>
-                        <td className={styles.amountCol}>{item.amount}</td>
-                        <td>
-                          <div className={styles.rowActions}>
-                            <Button
-                              onClick={() => startEdit(item)}
-                              size="sm"
-                              type="button"
-                              variant="secondary"
+                    {items.map((item) => {
+                      const categoryLabel = item.category_id
+                        ? categoryNames.get(item.category_id) ?? "Unavailable category"
+                        : "Uncategorized";
+                      const accountLabel = item.account_id
+                        ? accountNames.get(item.account_id) ?? "Unavailable account"
+                        : "No account";
+
+                      return (
+                        <tr key={item.id}>
+                          <td>{item.date}</td>
+                          <td>{item.description ?? "—"}</td>
+                          <td>{categoryLabel}</td>
+                          <td>{accountLabel}</td>
+                          <td>
+                            <span
+                              className={cn(
+                                styles.pill,
+                                item.type === "income" ? styles.income : styles.expense,
+                              )}
                             >
-                              Edit
-                            </Button>
-                            <Button
-                              disabled={isDeleting}
-                              onClick={() => void handleDelete(item.id)}
-                              size="sm"
-                              type="button"
-                              variant="ghost"
-                            >
-                              Delete
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                              {item.type}
+                            </span>
+                          </td>
+                          <td className={styles.amountCol}>{item.amount}</td>
+                          <td>
+                            <div className={styles.rowActions}>
+                              <Button
+                                onClick={() => startEdit(item)}
+                                size="sm"
+                                type="button"
+                                variant="secondary"
+                              >
+                                Edit
+                              </Button>
+                              <Button
+                                disabled={isDeleting}
+                                onClick={() => void handleDelete(item.id)}
+                                size="sm"
+                                type="button"
+                                variant="ghost"
+                              >
+                                Delete
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -437,16 +499,32 @@ export function TransactionsClient() {
                   value={form.date}
                   onChange={(event) => updateForm("date", event.target.value)}
                 />
-                <Input
-                  placeholder="Category UUID"
+                <select
+                  aria-label="Category"
+                  className={styles.select}
                   value={form.categoryId}
                   onChange={(event) => updateForm("categoryId", event.target.value)}
-                />
-                <Input
-                  placeholder="Optional account UUID"
+                >
+                  <option value="">Uncategorized</option>
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Account"
+                  className={styles.select}
                   value={form.accountId}
                   onChange={(event) => updateForm("accountId", event.target.value)}
-                />
+                >
+                  <option value="">No account</option>
+                  {accounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <Textarea
@@ -460,9 +538,11 @@ export function TransactionsClient() {
               </p>
 
               <div className={styles.formActions}>
-                <Button disabled={isSaving} type="submit">
+                <Button disabled={isSaving || referencesLoading} type="submit">
                   {isSaving
                     ? "Saving..."
+                    : referencesLoading
+                      ? "Loading categories and accounts..."
                     : isEditing
                       ? "Update transaction"
                       : "Create transaction"}

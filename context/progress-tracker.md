@@ -4,7 +4,7 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Phase 2 — Categories & Accounts. In progress.
+- Phase 2 — Categories & Accounts. In progress; transaction UI verification remains.
 
 ## Current Goal
 
@@ -53,15 +53,18 @@ Update this file after every meaningful implementation change.
   assigned automatically from the approved palette.
 - Local preview origins on ports 3000 and 3100 are covered by CORS regression
   tests so resource names load correctly during review.
+- Transaction creation and editing now use named category and account selectors.
+  The transaction list renders resource names with safe missing-reference
+  fallbacks, and its filters cover both category and account. All transaction,
+  category, and account query caches are scoped by authenticated user ID.
 
 ## In Progress
 
-- Phase 2 transaction selectors and category/account list filters.
+- Full authenticated Phase 2 UI smoke test, including multi-user isolation.
 
 ## Next Up
 
-- Wire Categories, Accounts, and Transactions UI flows.
-- Run frontend lint/build and complete the authenticated UI smoke test.
+- Complete the authenticated multi-user UI smoke test.
 - Then tighten the root README and repo metadata to match Finance Flow.
 
 ## Open Questions
@@ -92,6 +95,15 @@ Update this file after every meaningful implementation change.
 
 ## Session Notes
 
+- Transaction selector/filter implementation verification passed on 2026-07-29:
+  frontend TypeScript, lint, and production build passed; backend Ruff passed;
+  backend pytest reported 19 passed and 1 skipped with the existing Starlette
+  `on_event` deprecation warning.
+- The local backend and frontend started successfully at
+  `http://127.0.0.1:8100` and `http://127.0.0.1:3100`, respectively. The
+  authenticated click-through scenarios were not observed because no
+  controllable browser was attached to this Codex session. Multi-user UI
+  isolation therefore remains an explicit verification gap.
 - Two context PDFs are the authoritative source: the complete project
   guide and the detailed all-phases spec. Phases run 0 → 6; value
   concentrates in Phases 1, 3, and 5. Target: ~4–6 weeks part-time to a

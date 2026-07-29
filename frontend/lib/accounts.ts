@@ -10,6 +10,10 @@ interface AccountListResponse {
   items: Account[];
 }
 
+export function accountQueryKey(userId: string) {
+  return ["accounts", userId] as const;
+}
+
 export async function listAccounts(): Promise<Account[]> {
   return (await requestJson<AccountListResponse>("/accounts")).items;
 }
