@@ -57,6 +57,9 @@ Update this file after every meaningful implementation change.
   The transaction list renders resource names with safe missing-reference
   fallbacks, and its filters cover both category and account. All transaction,
   category, and account query caches are scoped by authenticated user ID.
+- The Phase 3 dashboard shell now includes an authenticated period selector,
+  typed FastAPI dashboard client, summary cards, and loading, empty, and retry
+  states. Chart rendering remains the next dashboard unit.
 
 ## In Progress
 
