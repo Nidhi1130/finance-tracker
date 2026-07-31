@@ -6,7 +6,7 @@
 
 **Architecture:** Add one FastAPI `GET /dashboard` endpoint backed by a dedicated dashboard service and in-memory/PostgreSQL repositories. PostgreSQL performs parameterized server-side aggregation inside the existing user-scoped database session; the Next.js client fetches the single response through TanStack Query and renders period controls, summary cards, and Recharts visualizations.
 
-**Tech Stack:** Python 3.12+, FastAPI, Pydantic, psycopg 3, PostgreSQL 16/17, Supabase Auth/RLS, Next.js 16, React 19, TypeScript, TanStack Query 5, Recharts 3.10.1, CSS Modules
+**Tech Stack:** Python 3.12+, FastAPI, Pydantic, psycopg 3, PostgreSQL 16/17, Supabase Auth/RLS, Next.js 16, React 19, TypeScript, TanStack Query 5, Recharts 3.10.1, Vitest 3.2.7, React Testing Library 16.3.2, CSS Modules
 
 ## Global Constraints
 
@@ -410,16 +410,66 @@ git commit -m "feat: aggregate dashboard data in postgres"
 
 **Files:**
 - Create: `frontend/lib/dashboard.ts`
+- Create: `frontend/lib/dashboard.test.ts`
 - Create: `frontend/app/dashboard-client.tsx`
+- Create: `frontend/app/dashboard-client.test.tsx`
+- Create: `frontend/test/setup.ts`
+- Create: `frontend/vitest.config.ts`
 - Modify: `frontend/app/page.tsx`
 - Replace: `frontend/app/page.module.css`
+- Modify: `frontend/package.json`
+- Modify: `frontend/package-lock.json`
+- Modify: `.github/workflows/ci.yml`
 
 **Interfaces:**
 - Consumes: `GET /dashboard?from=YYYY-MM-DD&to=YYYY-MM-DD` from Task 1.
 - Produces: `DashboardResponse`, `DashboardPeriodPreset`, `dateToInputValue()`, `thisMonthPeriod()`, `lastMonthPeriod()`, `dashboardQueryKey()`, and `getDashboard()`.
 - Produces: authenticated `DashboardClient` with period controls, summary cards, loading, empty, and retry states.
 
-- [ ] **Step 1: Add typed API and calendar helpers**
+- [ ] **Step 1: Install and configure the approved frontend test stack**
+
+Run:
+
+```bash
+cd frontend
+npm install --save-dev --save-exact \
+  vitest@3.2.7 jsdom@26.1.0 \
+  @testing-library/react@16.3.2 \
+  @testing-library/dom@10.4.1 \
+  @testing-library/jest-dom@7.0.0
+```
+
+Add `"test": "vitest run"` to `package.json`. Create `vitest.config.ts` with the `jsdom` environment, `test/setup.ts`, and an `@` alias resolved from `fileURLToPath(new URL(".", import.meta.url))`. In `test/setup.ts`, import `@testing-library/jest-dom/vitest` and call Testing Library `cleanup()` in `afterEach`.
+
+Add `npm test` to the frontend CI job immediately after `npm ci` and before lint/build.
+
+- [ ] **Step 2: Write failing calendar, query-key, and client-state tests**
+
+Create `frontend/lib/dashboard.test.ts` with hand-derived literals proving:
+
+```typescript
+expect(dateToInputValue(new Date(2026, 6, 5))).toBe("2026-07-05");
+expect(thisMonthPeriod(new Date(2026, 6, 15))).toEqual({ from: "2026-07-01", to: "2026-07-31" });
+expect(lastMonthPeriod(new Date(2026, 0, 15))).toEqual({ from: "2025-12-01", to: "2025-12-31" });
+expect(dashboardQueryKey("user-a", "2026-07-01", "2026-07-31")).toEqual([
+  "dashboard", "user-a", "2026-07-01", "2026-07-31",
+]);
+```
+
+Mock `requestJson` with its exact full call signature and assert `getDashboard("2026-07-01", "2026-07-31")` requests `/dashboard?from=2026-07-01&to=2026-07-31`.
+
+Create `frontend/app/dashboard-client.test.tsx` with a real `QueryClientProvider`, a controlled `getDashboard` boundary response matching the full API shape, and narrow mocks only for `useAuth()` and `useRouter()`. Test the consumer-visible behavior: populated summary values, an empty response message, a rejected request with Retry, preset date changes, and Custom Apply disabled for missing/reversed dates.
+
+Run:
+
+```bash
+cd frontend
+npm test
+```
+
+Expected: tests fail because `dashboard.ts` and `DashboardClient` do not exist.
+
+- [ ] **Step 3: Add typed API and calendar helpers**
 
 Create `frontend/lib/dashboard.ts` with API types mirroring Pydantic strings exactly:
 
@@ -458,7 +508,7 @@ export function dateToInputValue(value: Date): string {
 
 `thisMonthPeriod(now)` returns local first/last month dates; `lastMonthPeriod(now)` uses `new Date(year, month - 1, 1)` and `new Date(year, month, 0)`. `dashboardQueryKey(userId, from, to)` returns `["dashboard", userId, from, to] as const`. `getDashboard()` URL-encodes both dates and calls `requestJson<DashboardResponse>()`.
 
-- [ ] **Step 2: Build the client page with presets and auth behavior**
+- [ ] **Step 4: Build the client page with presets and auth behavior**
 
 Create `frontend/app/dashboard-client.tsx` as a client component. Use `useAuth()`, default to `thisMonthPeriod(new Date())`, and keep draft custom dates separate from applied dates. Configure:
 
@@ -473,9 +523,9 @@ const dashboardQuery = useQuery({
 
 Redirect unauthenticated configured users to `/login` using the same visible sign-in card pattern as Transactions. Add This month, Last month, and Custom buttons. Custom Apply remains disabled when either date is blank or `from > to`.
 
-- [ ] **Step 3: Render exact summary and state behavior**
+- [ ] **Step 5: Render exact summary and state behavior**
 
-Use `Intl.NumberFormat(undefined, { style: "currency", currency: "SEK" })` and convert API decimal strings only at the display boundary. Keep financial computation on the backend; the browser conversion is display-only.
+Use `Intl.NumberFormat("sv-SE", { style: "currency", currency: "SEK" })` and convert API decimal strings only at the display boundary. Keep financial computation on the backend; the browser conversion is display-only and deterministic in tests.
 
 Render three cards with semantic classes:
 
@@ -487,7 +537,7 @@ Render three cards with semantic classes:
 
 Render stable skeleton blocks while the first request loads, an error card with `dashboardQuery.refetch()` on Retry, and zero-value summary cards plus `No transactions in this period` when both chart arrays are empty.
 
-- [ ] **Step 4: Replace the placeholder homepage and add responsive CSS**
+- [ ] **Step 6: Replace the placeholder homepage and add responsive CSS**
 
 Make `frontend/app/page.tsx` a thin server component:
 
@@ -506,22 +556,23 @@ export default function Home() {
 
 Replace `page.module.css` with dashboard-scoped layout classes. Use a three-column summary grid above a two-column chart grid, collapse both to one column below 760px, use only existing CSS color/radius tokens, and keep numbers `font-variant-numeric: tabular-nums`.
 
-- [ ] **Step 5: Run frontend type/build validation**
+- [ ] **Step 7: Run frontend tests, lint, and build**
 
 Run:
 
 ```bash
 cd frontend
+npm test
 npm run lint
 npm run build
 ```
 
-Expected: both commands exit 0; the dashboard page compiles without charts before Task 4.
+Expected: tests pass and both lint/build exit 0; the dashboard page compiles without charts before Task 4.
 
-- [ ] **Step 6: Commit the dashboard shell**
+- [ ] **Step 8: Commit the dashboard shell and test infrastructure**
 
 ```bash
-git add frontend/app frontend/lib/dashboard.ts
+git add frontend/app frontend/lib/dashboard.ts frontend/lib/dashboard.test.ts frontend/test frontend/vitest.config.ts frontend/package.json frontend/package-lock.json .github/workflows/ci.yml
 git commit -m "feat: add dashboard periods and summary cards"
 ```
 
@@ -532,8 +583,10 @@ git commit -m "feat: add dashboard periods and summary cards"
 **Files:**
 - Create: `frontend/components/dashboard/category-donut.tsx`
 - Create: `frontend/components/dashboard/category-donut.module.css`
+- Create: `frontend/components/dashboard/category-donut.test.tsx`
 - Create: `frontend/components/dashboard/cash-flow-chart.tsx`
 - Create: `frontend/components/dashboard/cash-flow-chart.module.css`
+- Create: `frontend/components/dashboard/cash-flow-chart.test.tsx`
 - Modify: `frontend/app/dashboard-client.tsx`
 - Modify: `frontend/package.json`
 - Modify: `frontend/package-lock.json`
@@ -553,31 +606,45 @@ npm install --save-exact recharts@3.10.1 react-is@19.2.4
 
 Confirm `package.json` and `package-lock.json` contain exact versions without a caret.
 
-- [ ] **Step 2: Implement the expense donut**
+- [ ] **Step 2: Write failing accessible-chart tests**
 
-Create `CategoryDonut` with `ResponsiveContainer`, `PieChart`, `Pie`, `Cell`, `Tooltip`, and `Legend`. Convert `amount` and `percentage` strings to numbers only for Recharts rendering. Use each API category color, `dataKey="amount"`, `nameKey="name"`, an inner radius, and tooltip currency formatting. Include an adjacent semantic list showing category name, formatted amount, and percentage so the chart remains understandable without color.
-
-- [ ] **Step 3: Implement the grouped cash-flow chart**
-
-Create `CashFlowChart` with `ResponsiveContainer`, `BarChart`, `CartesianGrid`, `XAxis`, `YAxis`, `Tooltip`, `Legend`, and two `Bar` components. Map string values to numeric `income`/`expense` fields for Recharts. Use `var(--state-success)` for Income and `var(--state-error)` for Expense, show API labels on the x-axis, and format tooltip/y-axis values as SEK.
-
-- [ ] **Step 4: Wire charts and accessible empty states**
-
-In `DashboardClient`, render chart cards only when their respective arrays contain data. Otherwise render `No expense categories in this period` and `No cash-flow activity in this period`. Add `aria-labelledby` relationships between chart headings and their containers; do not rely on tooltip hover as the only readable representation.
-
-- [ ] **Step 5: Verify frontend lint and production build**
+Create `category-donut.test.tsx` with two category fixtures and assert the rendered accessible summary exposes `Groceries`, text matching `/300,00/`, and `75.00%`. Create `cash-flow-chart.test.tsx` with two trend fixtures and assert an accessible summary exposes both period labels and both Income/Expense values. Assertions target text/list/table semantics owned by these components, not Recharts internals.
 
 Run:
 
 ```bash
 cd frontend
+npm test -- components/dashboard
+```
+
+Expected: tests fail because both chart components do not exist.
+
+- [ ] **Step 3: Implement the expense donut**
+
+Create `CategoryDonut` with `ResponsiveContainer`, `PieChart`, `Pie`, `Cell`, `Tooltip`, and `Legend`. Convert `amount` and `percentage` strings to numbers only for Recharts rendering. Use each API category color, `dataKey="amount"`, `nameKey="name"`, an inner radius, and tooltip currency formatting. Include an adjacent semantic list showing category name, formatted amount, and percentage so the chart remains understandable without color.
+
+- [ ] **Step 4: Implement the grouped cash-flow chart**
+
+Create `CashFlowChart` with `ResponsiveContainer`, `BarChart`, `CartesianGrid`, `XAxis`, `YAxis`, `Tooltip`, `Legend`, and two `Bar` components. Map string values to numeric `income`/`expense` fields for Recharts. Use `var(--state-success)` for Income and `var(--state-error)` for Expense, show API labels on the x-axis, and format tooltip/y-axis values as SEK. Include a visually-hidden semantic table with Period, Income, and Expense columns so the chart data is available without SVG or color.
+
+- [ ] **Step 5: Wire charts and accessible empty states**
+
+In `DashboardClient`, render chart cards only when their respective arrays contain data. Otherwise render `No expense categories in this period` and `No cash-flow activity in this period`. Add `aria-labelledby` relationships between chart headings and their containers; do not rely on tooltip hover as the only readable representation.
+
+- [ ] **Step 6: Verify frontend tests, lint, and production build**
+
+Run:
+
+```bash
+cd frontend
+npm test
 npm run lint
 npm run build
 ```
 
-Expected: lint and build exit 0 with Recharts bundled successfully for Next.js 16/React 19.
+Expected: chart and client tests pass; lint and build exit 0 with Recharts bundled successfully for Next.js 16/React 19.
 
-- [ ] **Step 6: Commit chart implementation**
+- [ ] **Step 7: Commit chart implementation**
 
 ```bash
 git add frontend/components/dashboard frontend/app/dashboard-client.tsx frontend/package.json frontend/package-lock.json
@@ -630,11 +697,12 @@ Run:
 ```bash
 cd frontend
 npm ci
+npm test
 npm run lint
 npm run build
 ```
 
-Record exit status for dependency installation, lint, and build.
+Record exact frontend test counts and exit status for dependency installation, lint, and build.
 
 - [ ] **Step 4: Perform authenticated dashboard smoke coverage**
 
