@@ -7,7 +7,7 @@ import re
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 def normalize_name(value: str) -> str:
@@ -114,3 +114,44 @@ class AccountOut(BaseModel):
 
 class AccountListResponse(BaseModel):
     items: list[AccountOut]
+
+
+class DashboardBucket(str, Enum):
+    daily = "daily"
+    weekly = "weekly"
+    monthly = "monthly"
+
+
+class DashboardPeriod(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    date_from: Date = Field(alias="from")
+    date_to: Date = Field(alias="to")
+    bucket: DashboardBucket
+
+
+class DashboardSummary(BaseModel):
+    income: Decimal
+    expense: Decimal
+    net: Decimal
+
+
+class DashboardCategory(BaseModel):
+    category_id: UUID | None
+    name: str
+    color: str
+    amount: Decimal
+    percentage: Decimal
+
+
+class DashboardTrendPoint(BaseModel):
+    period_start: Date
+    label: str
+    income: Decimal
+    expense: Decimal
+
+
+class DashboardResponse(BaseModel):
+    period: DashboardPeriod
+    summary: DashboardSummary
+    categories: list[DashboardCategory]
+    trend: list[DashboardTrendPoint]
