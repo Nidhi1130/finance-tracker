@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardClient } from "./dashboard-client";
@@ -46,11 +46,14 @@ function renderDashboard() {
     defaultOptions: { queries: { retry: false } },
   });
 
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <DashboardClient />
-    </QueryClientProvider>,
-  );
+  return {
+    queryClient,
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <DashboardClient />
+      </QueryClientProvider>,
+    ),
+  };
 }
 
 describe("DashboardClient", () => {
@@ -105,15 +108,51 @@ describe("DashboardClient", () => {
     await waitFor(() => expect(getDashboardMock).toHaveBeenCalledTimes(2));
   });
 
-  it("applies the last-month preset to a new dashboard request", async () => {
+  it("applies the exact previous-month boundaries for the Last month preset", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 6, 15));
     getDashboardMock.mockResolvedValue(populatedDashboard);
 
     renderDashboard();
 
-    await screen.findByText(/1\s200,50\s+kr/);
+    await act(async () => {});
     fireEvent.click(screen.getByRole("button", { name: "Last month" }));
+    await act(async () => {});
+
+    expect(getDashboardMock).toHaveBeenLastCalledWith("2026-06-01", "2026-06-30");
+  });
+
+  it("does not show user A data while user B dashboard data is pending", async () => {
+    useAuthMock.mockReturnValue({
+      configured: true,
+      loading: false,
+      session: { user: { id: "user-a" } } as never,
+      signInWithPassword: vi.fn(),
+      signOut: vi.fn(),
+    });
+    getDashboardMock.mockResolvedValueOnce(populatedDashboard);
+    getDashboardMock.mockImplementationOnce(() => new Promise(() => {}));
+
+    const { queryClient, rerender } = renderDashboard();
+
+    expect(await screen.findByText(/1\s200,50\s+kr/)).toBeInTheDocument();
+
+    useAuthMock.mockReturnValue({
+      configured: true,
+      loading: false,
+      session: { user: { id: "user-b" } } as never,
+      signInWithPassword: vi.fn(),
+      signOut: vi.fn(),
+    });
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <DashboardClient />
+      </QueryClientProvider>,
+    );
 
     await waitFor(() => expect(getDashboardMock).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText(/1\s200,50\s+kr/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Loading dashboard")).toBeInTheDocument();
   });
 
   it("disables custom Apply until the selected dates form a valid period", () => {

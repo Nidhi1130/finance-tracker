@@ -57,7 +57,6 @@ export function DashboardClient() {
     queryKey: dashboardQueryKey(userId, period.from, period.to),
     queryFn: () => getDashboard(period.from, period.to),
     enabled: !configured || Boolean(session),
-    placeholderData: (previousData) => previousData,
   });
 
   function applyPreset(nextPeriod: typeof period) {
