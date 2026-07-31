@@ -30,5 +30,10 @@ describe("CashFlowChart", () => {
     expect(within(table).getByText(/1\s200,50/)).toBeInTheDocument();
     expect(within(table).getByText(/300,00/)).toBeInTheDocument();
     expect(within(table).getByText(/125,25/)).toBeInTheDocument();
+
+    const secondPeriodRow = within(table).getByRole("row", { name: /2 Jul/ });
+    const [secondPeriodIncome] = within(secondPeriodRow).getAllByRole("cell");
+
+    expect(secondPeriodIncome).toHaveTextContent(/0,00/);
   });
 });
