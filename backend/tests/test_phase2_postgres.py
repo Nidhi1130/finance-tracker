@@ -14,8 +14,9 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from app.repositories.accounts import PostgresAccountRepository
 from app.repositories.base import InvalidReferenceError, database_session
 from app.repositories.categories import PostgresCategoryRepository
+from app.repositories.dashboard import PostgresDashboardRepository
 from app.repositories.transactions import PostgresTransactionRepository
-from app.schemas import AccountCreate, CategoryCreate, TransactionCreate, TxType
+from app.schemas import AccountCreate, CategoryCreate, DashboardBucket, TransactionCreate, TxType
 
 
 ROOT = Path(__file__).parents[2]
@@ -61,6 +62,7 @@ def postgres_url() -> str:
         )
         connection.execute(f"grant create, usage on schema public to {APP_ROLE}")
         connection.execute("drop table if exists transactions, accounts, categories cascade")
+        connection.execute("drop function if exists enforce_transaction_reference_ownership()")
         connection.execute("drop schema if exists auth cascade")
 
     app_url = _app_database_url(admin_url)
@@ -144,3 +146,93 @@ def test_postgres_rls_and_transaction_references(postgres_url: str) -> None:
     assert preserved is not None
     assert preserved.category_id is None
     assert preserved.account_id is None
+
+
+def test_dashboard_aggregates_only_the_current_users_transactions(postgres_url: str) -> None:
+    categories = PostgresCategoryRepository(postgres_url)
+    transactions = PostgresTransactionRepository(postgres_url)
+    dashboard = PostgresDashboardRepository(postgres_url)
+    user_a_category = categories.create(
+        USER_A_ID,
+        CategoryCreate(name="Business", color="#123ABC"),
+    )
+
+    for user_id, payload in (
+        (
+            USER_A_ID,
+            TransactionCreate(
+                amount=Decimal("1000.00"),
+                type=TxType.income,
+                date=date(2026, 7, 1),
+            ),
+        ),
+        (
+            USER_A_ID,
+            TransactionCreate(
+                amount=Decimal("30.00"),
+                type=TxType.expense,
+                date=date(2026, 7, 2),
+                category_id=user_a_category.id,
+            ),
+        ),
+        (
+            USER_A_ID,
+            TransactionCreate(
+                amount=Decimal("20.00"),
+                type=TxType.expense,
+                date=date(2026, 7, 8),
+            ),
+        ),
+        (
+            USER_B_ID,
+            TransactionCreate(
+                amount=Decimal("999.00"),
+                type=TxType.expense,
+                date=date(2026, 7, 2),
+            ),
+        ),
+    ):
+        transactions.create(user_id, payload)
+
+    result = dashboard.get(
+        USER_A_ID,
+        date(2026, 7, 1),
+        date(2026, 7, 10),
+        DashboardBucket.daily,
+    )
+
+    assert result.income == Decimal("1000.00")
+    assert result.expense == Decimal("50.00")
+    assert [
+        (item.category_id, item.name, item.color, item.amount, item.percentage)
+        for item in result.categories
+    ] == [
+        (user_a_category.id, "Business", "#123ABC", Decimal("30.00"), Decimal("60.00")),
+        (None, "Uncategorized", "#6B7280", Decimal("20.00"), Decimal("40.00")),
+    ]
+    assert [
+        (item.period_start, item.income, item.expense)
+        for item in result.trend
+    ] == [
+        (date(2026, 7, 1), Decimal("1000.00"), Decimal("0.00")),
+        (date(2026, 7, 2), Decimal("0.00"), Decimal("30.00")),
+        (date(2026, 7, 8), Decimal("0.00"), Decimal("20.00")),
+    ]
+
+
+def test_dashboard_index_exists(postgres_url: str) -> None:
+    with database_session(postgres_url, USER_A_ID) as connection:
+        definition = connection.execute(
+            "select indexdef from pg_indexes where schemaname = 'public' and indexname = 'transactions_user_date_idx'"
+        ).fetchone()
+    assert definition is not None
+    assert "(user_id, date)" in definition["indexdef"]
+
+
+def test_dashboard_repository_builder_uses_configured_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://dashboard-test")
+    from app.repositories import build_dashboard_repository
+
+    assert isinstance(build_dashboard_repository(), PostgresDashboardRepository)

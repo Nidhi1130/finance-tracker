@@ -43,6 +43,7 @@ create unique index if not exists accounts_owner_lower_name_key
   on accounts (user_id, lower(name));
 create index if not exists transactions_category_id_idx on transactions(category_id);
 create index if not exists transactions_account_id_idx on transactions(account_id);
+create index if not exists transactions_user_date_idx on transactions(user_id, date);
 
 alter table categories enable row level security;
 alter table accounts enable row level security;

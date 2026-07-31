@@ -7,6 +7,7 @@ from typing import Protocol
 from uuid import UUID
 
 from app.repositories.categories import CategoryRepository
+from app.repositories.base import database_session
 from app.repositories.transactions import TransactionRepository
 from app.schemas import DashboardBucket, TxType
 
@@ -133,4 +134,90 @@ class InMemoryDashboardRepository:
             color=category.color,
             amount=amount,
             percentage=percentage,
+        )
+
+
+@dataclass
+class PostgresDashboardRepository:
+    database_url: str
+
+    def get(
+        self,
+        user_id: UUID,
+        date_from: date,
+        date_to: date,
+        bucket: DashboardBucket,
+    ) -> DashboardRecord:
+        bucket_sql = {
+            DashboardBucket.daily: "t.date",
+            DashboardBucket.weekly: "date_trunc('week', t.date)::date",
+            DashboardBucket.monthly: "date_trunc('month', t.date)::date",
+        }[bucket]
+
+        summary_query = """
+            select
+              coalesce(sum(amount) filter (where type = 'income'), 0.00)::numeric(12,2) as income,
+              coalesce(sum(amount) filter (where type = 'expense'), 0.00)::numeric(12,2) as expense
+            from transactions t
+            where t.user_id = current_setting('app.user_id')::uuid
+              and t.date between %s and %s
+        """
+        categories_query = """
+            with expense_totals as (
+              select
+                t.category_id,
+                coalesce(c.name, 'Uncategorized') as name,
+                coalesce(c.color, '#6B7280') as color,
+                sum(t.amount)::numeric(12,2) as amount
+              from transactions t
+              left join categories c on c.id = t.category_id
+              where t.user_id = current_setting('app.user_id')::uuid
+                and t.type = 'expense'
+                and t.date between %s and %s
+              group by t.category_id, coalesce(c.name, 'Uncategorized'), coalesce(c.color, '#6B7280')
+            )
+            select category_id, name, color, amount,
+                   round(amount * 100 / sum(amount) over (), 2) as percentage
+            from expense_totals
+            order by amount desc, lower(name)
+        """
+        trend_query = f"""
+            select
+              {bucket_sql} as period_start,
+              coalesce(sum(t.amount) filter (where t.type = 'income'), 0.00)::numeric(12,2) as income,
+              coalesce(sum(t.amount) filter (where t.type = 'expense'), 0.00)::numeric(12,2) as expense
+            from transactions t
+            where t.user_id = current_setting('app.user_id')::uuid
+              and t.date between %s and %s
+            group by {bucket_sql}
+            order by period_start
+        """
+
+        with database_session(self.database_url, user_id) as connection:
+            summary = connection.execute(summary_query, (date_from, date_to)).fetchone()
+            category_rows = connection.execute(categories_query, (date_from, date_to)).fetchall()
+            trend_rows = connection.execute(trend_query, (date_from, date_to)).fetchall()
+
+        assert summary is not None
+        return DashboardRecord(
+            income=summary["income"],
+            expense=summary["expense"],
+            categories=[
+                DashboardCategoryRecord(
+                    category_id=UUID(str(row["category_id"])) if row["category_id"] else None,
+                    name=row["name"],
+                    color=row["color"],
+                    amount=row["amount"],
+                    percentage=row["percentage"],
+                )
+                for row in category_rows
+            ],
+            trend=[
+                DashboardTrendRecord(
+                    period_start=row["period_start"],
+                    income=row["income"],
+                    expense=row["expense"],
+                )
+                for row in trend_rows
+            ],
         )
