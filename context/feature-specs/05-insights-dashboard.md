@@ -94,6 +94,8 @@ inclusive `from`/`to` boundaries.
   custom requests, known `Test purchase` aggregation, live empty range,
   backend-stop/Retry recovery, sign-out redirect, and real multi-user cache
   isolation.
-- No frontend component reads Supabase or PostgreSQL directly, and this phase
-  adds no AI categorization, bank import, deployment, or data mutation beyond
-  the approved index migration.
+- Dashboard and other financial-data access flows through FastAPI; the
+  dashboard does not read Supabase or PostgreSQL directly. The Supabase browser
+  client remains limited to Auth session, sign-in, and sign-out handling. This
+  phase adds no AI categorization, bank import, deployment, or data mutation
+  beyond the approved index migration.
