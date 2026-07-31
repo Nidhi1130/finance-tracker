@@ -78,9 +78,9 @@ describe("DashboardClient", () => {
 
     renderDashboard();
 
-    expect(await screen.findByText(/1\s200,50\s+kr/)).toBeInTheDocument();
-    expect(screen.getByText(/200,25\s+kr/)).toBeInTheDocument();
-    expect(screen.getByText(/1\s000,25\s+kr/)).toBeInTheDocument();
+    expect((await screen.findAllByText(/1\s200,50\s+kr/)).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/200,25\s+kr/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/1\s000,25\s+kr/).length).toBeGreaterThan(0);
   });
 
   it("explains when the selected period has no transactions", async () => {
@@ -94,6 +94,17 @@ describe("DashboardClient", () => {
     renderDashboard();
 
     expect(await screen.findByText("No transactions in this period")).toBeInTheDocument();
+    expect(screen.getByText("No expense categories in this period")).toBeInTheDocument();
+    expect(screen.getByText("No cash-flow activity in this period")).toBeInTheDocument();
+  });
+
+  it("labels the populated chart cards with their headings", async () => {
+    getDashboardMock.mockResolvedValue(populatedDashboard);
+
+    renderDashboard();
+
+    expect(await screen.findByRole("heading", { name: "Expense categories" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Cash flow" })).toBeInTheDocument();
   });
 
   it("shows a rejected request and retries it on demand", async () => {
@@ -135,7 +146,7 @@ describe("DashboardClient", () => {
 
     const { queryClient, rerender } = renderDashboard();
 
-    expect(await screen.findByText(/1\s200,50\s+kr/)).toBeInTheDocument();
+    expect((await screen.findAllByText(/1\s200,50\s+kr/)).length).toBeGreaterThan(0);
 
     useAuthMock.mockReturnValue({
       configured: true,

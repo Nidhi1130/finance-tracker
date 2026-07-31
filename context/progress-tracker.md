@@ -60,6 +60,10 @@ Update this file after every meaningful implementation change.
 - The Phase 3 dashboard shell now includes an authenticated period selector,
   typed FastAPI dashboard client, summary cards, and loading, empty, and retry
   states. Chart rendering remains the next dashboard unit.
+- The Phase 3 dashboard now visualizes expense categories with a Recharts
+  donut and cash flow with grouped income and expense bars. Both charts expose
+  semantic text summaries for use without colour or SVG, and each has an
+  explicit empty state.
 
 ## In Progress
 

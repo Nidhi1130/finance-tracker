@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/components/auth/auth-provider";
+import { CashFlowChart } from "@/components/dashboard/cash-flow-chart";
+import { CategoryDonut } from "@/components/dashboard/category-donut";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -191,6 +193,28 @@ export function DashboardClient() {
               value={formatCurrency(data.summary.net)}
               tone={Number(data.summary.net) >= 0 ? "income" : "expense"}
             />
+          </div>
+          <div className={styles.chartGrid}>
+            {data.categories.length > 0 ? (
+              <Card aria-labelledby="expense-categories-title" className={styles.chartCard}>
+                <h2 className={styles.chartTitle} id="expense-categories-title">
+                  Expense categories
+                </h2>
+                <CategoryDonut categories={data.categories} />
+              </Card>
+            ) : (
+              <p className={styles.empty}>No expense categories in this period</p>
+            )}
+            {data.trend.length > 0 ? (
+              <Card aria-labelledby="cash-flow-title" className={styles.chartCard}>
+                <h2 className={styles.chartTitle} id="cash-flow-title">
+                  Cash flow
+                </h2>
+                <CashFlowChart points={data.trend} />
+              </Card>
+            ) : (
+              <p className={styles.empty}>No cash-flow activity in this period</p>
+            )}
           </div>
           {isEmpty ? <p className={styles.empty}>No transactions in this period</p> : null}
         </>

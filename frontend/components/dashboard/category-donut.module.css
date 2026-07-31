@@ -1,0 +1,30 @@
+.chart {
+  display: grid;
+  gap: 16px;
+}
+
+.visual {
+  min-height: 260px;
+}
+
+.summary {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.summaryItem {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.summaryItem span:first-child {
+  color: var(--text-primary);
+  font-weight: 600;
+}
