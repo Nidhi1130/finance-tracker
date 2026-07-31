@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -10,6 +11,7 @@ import psycopg
 import pytest
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
+from psycopg.rows import dict_row
 
 from app.repositories.accounts import PostgresAccountRepository
 from app.repositories.base import InvalidReferenceError, database_session
@@ -21,6 +23,7 @@ from app.schemas import AccountCreate, CategoryCreate, DashboardBucket, Transact
 
 ROOT = Path(__file__).parents[2]
 INIT_SQL = (ROOT / "backend/sql/init.sql").read_text()
+MIGRATION_SQL = (ROOT / "backend/sql/migrations/003_phase_3_dashboard_index.sql").read_text()
 USER_A_ID = UUID("10000000-0000-4000-8000-000000000001")
 USER_B_ID = UUID("20000000-0000-4000-8000-000000000002")
 APP_ROLE = "finance_app_test"
@@ -184,6 +187,22 @@ def test_dashboard_aggregates_only_the_current_users_transactions(postgres_url: 
             ),
         ),
         (
+            USER_A_ID,
+            TransactionCreate(
+                amount=Decimal("777.00"),
+                type=TxType.income,
+                date=date(2026, 6, 30),
+            ),
+        ),
+        (
+            USER_A_ID,
+            TransactionCreate(
+                amount=Decimal("10.00"),
+                type=TxType.expense,
+                date=date(2026, 7, 10),
+            ),
+        ),
+        (
             USER_B_ID,
             TransactionCreate(
                 amount=Decimal("999.00"),
@@ -202,13 +221,13 @@ def test_dashboard_aggregates_only_the_current_users_transactions(postgres_url: 
     )
 
     assert result.income == Decimal("1000.00")
-    assert result.expense == Decimal("50.00")
+    assert result.expense == Decimal("60.00")
     assert [
         (item.category_id, item.name, item.color, item.amount, item.percentage)
         for item in result.categories
     ] == [
-        (user_a_category.id, "Business", "#123ABC", Decimal("30.00"), Decimal("60.00")),
-        (None, "Uncategorized", "#6B7280", Decimal("20.00"), Decimal("40.00")),
+        (user_a_category.id, "Business", "#123ABC", Decimal("30.00"), Decimal("50.00")),
+        (None, "Uncategorized", "#6B7280", Decimal("30.00"), Decimal("50.00")),
     ]
     assert [
         (item.period_start, item.income, item.expense)
@@ -217,16 +236,190 @@ def test_dashboard_aggregates_only_the_current_users_transactions(postgres_url: 
         (date(2026, 7, 1), Decimal("1000.00"), Decimal("0.00")),
         (date(2026, 7, 2), Decimal("0.00"), Decimal("30.00")),
         (date(2026, 7, 8), Decimal("0.00"), Decimal("20.00")),
+        (date(2026, 7, 10), Decimal("0.00"), Decimal("10.00")),
     ]
 
 
-def test_dashboard_index_exists(postgres_url: str) -> None:
-    with database_session(postgres_url, USER_A_ID) as connection:
+def test_dashboard_groups_weekly_and_monthly_trends(postgres_url: str) -> None:
+    transactions = PostgresTransactionRepository(postgres_url)
+    dashboard = PostgresDashboardRepository(postgres_url)
+    for payload in (
+        TransactionCreate(
+            amount=Decimal("10.00"),
+            type=TxType.income,
+            date=date(2026, 9, 1),
+        ),
+        TransactionCreate(
+            amount=Decimal("3.00"),
+            type=TxType.expense,
+            date=date(2026, 9, 6),
+        ),
+        TransactionCreate(
+            amount=Decimal("7.00"),
+            type=TxType.income,
+            date=date(2026, 9, 7),
+        ),
+        TransactionCreate(
+            amount=Decimal("5.00"),
+            type=TxType.expense,
+            date=date(2026, 10, 1),
+        ),
+    ):
+        transactions.create(USER_A_ID, payload)
+
+    weekly = dashboard.get(
+        USER_A_ID,
+        date(2026, 9, 1),
+        date(2026, 10, 1),
+        DashboardBucket.weekly,
+    )
+    monthly = dashboard.get(
+        USER_A_ID,
+        date(2026, 9, 1),
+        date(2026, 10, 1),
+        DashboardBucket.monthly,
+    )
+
+    assert [(item.period_start, item.income, item.expense) for item in weekly.trend] == [
+        (date(2026, 8, 31), Decimal("10.00"), Decimal("3.00")),
+        (date(2026, 9, 7), Decimal("7.00"), Decimal("0.00")),
+        (date(2026, 9, 28), Decimal("0.00"), Decimal("5.00")),
+    ]
+    assert [(item.period_start, item.income, item.expense) for item in monthly.trend] == [
+        (date(2026, 9, 1), Decimal("17.00"), Decimal("3.00")),
+        (date(2026, 10, 1), Decimal("0.00"), Decimal("5.00")),
+    ]
+
+
+def test_dashboard_index_is_valid_non_partial_and_orders_user_before_date(postgres_url: str) -> None:
+    with psycopg.connect(postgres_url, autocommit=True, row_factory=dict_row) as connection:
+        connection.execute(MIGRATION_SQL)
+        connection.execute(MIGRATION_SQL)
         definition = connection.execute(
-            "select indexdef from pg_indexes where schemaname = 'public' and indexname = 'transactions_user_date_idx'"
+            """
+            select
+              table_schema.nspname as schema_name,
+              table_class.relname as table_name,
+              index_data.indisvalid as is_valid,
+              index_data.indpred is null as is_not_partial,
+              array(
+                select attribute.attname
+                from unnest(index_data.indkey) with ordinality as key_column(attnum, position)
+                join pg_attribute attribute
+                  on attribute.attrelid = index_data.indrelid
+                 and attribute.attnum = key_column.attnum
+                order by key_column.position
+              ) as columns
+            from pg_index index_data
+            join pg_class table_class on table_class.oid = index_data.indrelid
+            join pg_namespace table_schema on table_schema.oid = table_class.relnamespace
+            where index_data.indexrelid = 'public.transactions_user_date_idx'::regclass
+            """
         ).fetchone()
-    assert definition is not None
-    assert "(user_id, date)" in definition["indexdef"]
+
+    assert definition == {
+        "schema_name": "public",
+        "table_name": "transactions",
+        "is_valid": True,
+        "is_not_partial": True,
+        "columns": ["user_id", "date"],
+    }
+
+
+def test_dashboard_keeps_large_aggregate_totals_as_numeric(postgres_url: str) -> None:
+    transactions = PostgresTransactionRepository(postgres_url)
+    dashboard = PostgresDashboardRepository(postgres_url)
+    for _ in range(2):
+        transactions.create(
+            USER_A_ID,
+            TransactionCreate(
+                amount=Decimal("9999999999.99"),
+                type=TxType.income,
+                date=date(2026, 8, 1),
+            ),
+        )
+
+    result = dashboard.get(
+        USER_A_ID,
+        date(2026, 8, 1),
+        date(2026, 8, 1),
+        DashboardBucket.daily,
+    )
+
+    assert result.income == Decimal("19999999999.98")
+
+
+def test_dashboard_omits_zero_total_expense_categories(postgres_url: str) -> None:
+    dashboard = PostgresDashboardRepository(postgres_url)
+    with database_session(postgres_url, USER_A_ID) as connection:
+        connection.execute(
+            "insert into transactions (user_id, amount, type, date) values (%s, 0.00, 'expense', %s)",
+            (USER_A_ID, date(2026, 8, 2)),
+        )
+
+    result = dashboard.get(
+        USER_A_ID,
+        date(2026, 8, 2),
+        date(2026, 8, 2),
+        DashboardBucket.daily,
+    )
+
+    assert result.expense == Decimal("0.00")
+    assert result.categories == []
+
+
+@pytest.mark.parametrize(
+    ("bucket", "bucket_sql"),
+    [
+        (DashboardBucket.daily, "t.date"),
+        (DashboardBucket.weekly, "date_trunc('week', t.date)::date"),
+        (DashboardBucket.monthly, "date_trunc('month', t.date)::date"),
+    ],
+)
+def test_dashboard_emits_tenant_date_predicates_and_trusted_bucket_expression(
+    monkeypatch: pytest.MonkeyPatch,
+    bucket: DashboardBucket,
+    bucket_sql: str,
+) -> None:
+    class QueryCaptureConnection:
+        def __init__(self) -> None:
+            self.queries: list[tuple[str, tuple[date, date]]] = []
+
+        def execute(self, query: str, params: tuple[date, date]) -> QueryCaptureConnection:
+            self.queries.append((query, params))
+            return self
+
+        def fetchone(self) -> dict[str, Decimal]:
+            return {"income": Decimal("1.00"), "expense": Decimal("0.00")}
+
+        def fetchall(self) -> list[dict[str, Decimal]]:
+            return []
+
+    connection = QueryCaptureConnection()
+
+    @contextmanager
+    def capture_session(_database_url: str, _user_id: UUID):
+        yield connection
+
+    monkeypatch.setattr("app.repositories.dashboard.database_session", capture_session)
+    date_from = date(2026, 1, 2)
+    date_to = date(2026, 3, 4)
+
+    result = PostgresDashboardRepository("postgresql://query-capture").get(
+        USER_A_ID,
+        date_from,
+        date_to,
+        bucket,
+    )
+
+    assert result.income == Decimal("1.00")
+    assert len(connection.queries) == 3
+    for query, params in connection.queries:
+        assert "t.user_id = current_setting('app.user_id')::uuid" in query
+        assert "t.date between %s and %s" in query
+        assert params == (date_from, date_to)
+    assert f"{bucket_sql} as period_start" in connection.queries[2][0]
+    assert f"group by {bucket_sql}" in connection.queries[2][0]
 
 
 def test_dashboard_repository_builder_uses_configured_database(

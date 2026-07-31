@@ -343,8 +343,8 @@ Use three focused queries in that transaction:
 
 ```sql
 select
-  coalesce(sum(amount) filter (where type = 'income'), 0.00)::numeric(12,2) as income,
-  coalesce(sum(amount) filter (where type = 'expense'), 0.00)::numeric(12,2) as expense
+  coalesce(sum(amount) filter (where type = 'income'), 0.00) as income,
+  coalesce(sum(amount) filter (where type = 'expense'), 0.00) as expense
 from transactions t
 where t.user_id = current_setting('app.user_id')::uuid
   and t.date between %s and %s;
@@ -356,18 +356,24 @@ with expense_totals as (
     t.category_id,
     coalesce(c.name, 'Uncategorized') as name,
     coalesce(c.color, '#6B7280') as color,
-    sum(t.amount)::numeric(12,2) as amount
+    sum(t.amount) as amount
   from transactions t
   left join categories c on c.id = t.category_id
   where t.user_id = current_setting('app.user_id')::uuid
     and t.type = 'expense'
     and t.date between %s and %s
   group by t.category_id, coalesce(c.name, 'Uncategorized'), coalesce(c.color, '#6B7280')
+),
+total_expense as (
+  select sum(amount) as amount
+  from expense_totals
 )
-select category_id, name, color, amount,
-       round(amount * 100 / sum(amount) over (), 2) as percentage
+select category_id, name, color, expense_totals.amount as amount,
+       round(expense_totals.amount * 100 / total_expense.amount, 2) as percentage
 from expense_totals
-order by amount desc, lower(name);
+cross join total_expense
+where total_expense.amount > 0
+order by expense_totals.amount desc, lower(name);
 ```
 
 Build the trend expression only from the trusted enum, never request text:
