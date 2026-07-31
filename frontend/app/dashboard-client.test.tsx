@@ -107,6 +107,18 @@ describe("DashboardClient", () => {
     expect(screen.getByRole("heading", { name: "Cash flow" })).toBeInTheDocument();
   });
 
+  it("provides labeled summary and chart placeholders during the initial dashboard load", () => {
+    getDashboardMock.mockImplementation(() => new Promise(() => {}));
+
+    renderDashboard();
+
+    expect(screen.getByLabelText("Loading dashboard")).toBeInTheDocument();
+    expect(
+      screen.getByRole("status", { name: "Loading expense categories chart" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Loading cash-flow chart" })).toBeInTheDocument();
+  });
+
   it("shows a rejected request and retries it on demand", async () => {
     getDashboardMock.mockRejectedValueOnce(new Error("Dashboard unavailable"));
     getDashboardMock.mockResolvedValueOnce(populatedDashboard);
@@ -164,6 +176,28 @@ describe("DashboardClient", () => {
     await waitFor(() => expect(getDashboardMock).toHaveBeenCalledTimes(2));
     expect(screen.queryByText(/1\s200,50\s+kr/)).not.toBeInTheDocument();
     expect(screen.getByLabelText("Loading dashboard")).toBeInTheDocument();
+  });
+
+  it("retains the previous dashboard while another period for the same user loads", async () => {
+    useAuthMock.mockReturnValue({
+      configured: true,
+      loading: false,
+      session: { user: { id: "user-a" } } as never,
+      signInWithPassword: vi.fn(),
+      signOut: vi.fn(),
+    });
+    getDashboardMock.mockResolvedValueOnce(populatedDashboard);
+    getDashboardMock.mockImplementationOnce(() => new Promise(() => {}));
+
+    renderDashboard();
+
+    expect((await screen.findAllByText(/1\s200,50\s+kr/)).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Last month" }));
+
+    await waitFor(() => expect(getDashboardMock).toHaveBeenCalledTimes(2));
+    expect(screen.getAllByText(/1\s200,50\s+kr/).length).toBeGreaterThan(0);
+    expect(screen.queryByLabelText("Loading dashboard")).not.toBeInTheDocument();
   });
 
   it("disables custom Apply until the selected dates form a valid period", () => {

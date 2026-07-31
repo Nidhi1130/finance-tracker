@@ -398,7 +398,13 @@ def test_dashboard_emits_tenant_date_predicates_and_trusted_bucket_expression(
     connection = QueryCaptureConnection()
 
     @contextmanager
-    def capture_session(_database_url: str, _user_id: UUID):
+    def capture_session(
+        _database_url: str,
+        _user_id: UUID,
+        *,
+        repeatable_read: bool = False,
+    ):
+        assert repeatable_read is True
         yield connection
 
     monkeypatch.setattr("app.repositories.dashboard.database_session", capture_session)
@@ -420,6 +426,146 @@ def test_dashboard_emits_tenant_date_predicates_and_trusted_bucket_expression(
         assert params == (date_from, date_to)
     assert f"{bucket_sql} as period_start" in connection.queries[2][0]
     assert f"group by {bucket_sql}" in connection.queries[2][0]
+
+
+def test_dashboard_starts_a_repeatable_read_snapshot_before_aggregation_queries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class QueryCaptureConnection:
+        def __init__(self) -> None:
+            self.queries: list[str] = []
+
+        def execute(
+            self,
+            query: str,
+            _params: tuple[date, date] | None = None,
+        ) -> QueryCaptureConnection:
+            self.queries.append(query)
+            return self
+
+        def fetchone(self) -> dict[str, Decimal]:
+            return {"income": Decimal("0.00"), "expense": Decimal("0.00")}
+
+        def fetchall(self) -> list[dict[str, Decimal]]:
+            return []
+
+    connection = QueryCaptureConnection()
+
+    snapshot_requested = False
+
+    @contextmanager
+    def capture_session(
+        _database_url: str,
+        _user_id: UUID,
+        *,
+        repeatable_read: bool = False,
+    ):
+        nonlocal snapshot_requested
+        snapshot_requested = repeatable_read
+        yield connection
+
+    monkeypatch.setattr("app.repositories.dashboard.database_session", capture_session)
+
+    PostgresDashboardRepository("postgresql://query-capture").get(
+        USER_A_ID,
+        date(2026, 1, 1),
+        date(2026, 1, 31),
+        DashboardBucket.daily,
+    )
+
+    assert snapshot_requested is True
+    assert len(connection.queries) == 3
+    assert all("from transactions t" in query for query in connection.queries)
+
+
+def test_database_session_sets_repeatable_read_before_the_rls_user_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Transaction:
+        def __enter__(self) -> None:
+            return None
+
+        def __exit__(self, _exc_type: object, _exc: object, _traceback: object) -> None:
+            return None
+
+    class Connection:
+        def __init__(self) -> None:
+            self.queries: list[tuple[str, tuple[str, ...]]] = []
+
+        def __enter__(self) -> Connection:
+            return self
+
+        def __exit__(self, _exc_type: object, _exc: object, _traceback: object) -> None:
+            return None
+
+        def transaction(self) -> Transaction:
+            return Transaction()
+
+        def execute(self, query: str, params: tuple[str, ...] = ()) -> None:
+            self.queries.append((query, params))
+
+    connection = Connection()
+    monkeypatch.setattr("app.repositories.base.psycopg.connect", lambda *_args, **_kwargs: connection)
+
+    with database_session(
+        "postgresql://query-capture",
+        USER_A_ID,
+        repeatable_read=True,
+    ):
+        pass
+
+    assert connection.queries == [
+        ("set transaction isolation level repeatable read", ()),
+        ("select set_config('app.user_id', %s, true)", (str(USER_A_ID),)),
+    ]
+
+
+def test_dashboard_postgres_category_order_breaks_equal_name_and_amount_ties_by_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class QueryCaptureConnection:
+        def __init__(self) -> None:
+            self.queries: list[str] = []
+
+        def execute(
+            self,
+            query: str,
+            _params: tuple[date, date] | None = None,
+        ) -> QueryCaptureConnection:
+            self.queries.append(query)
+            return self
+
+        def fetchone(self) -> dict[str, Decimal]:
+            return {"income": Decimal("0.00"), "expense": Decimal("0.00")}
+
+        def fetchall(self) -> list[dict[str, Decimal]]:
+            return []
+
+    connection = QueryCaptureConnection()
+
+    @contextmanager
+    def capture_session(
+        _database_url: str,
+        _user_id: UUID,
+        *,
+        repeatable_read: bool = False,
+    ):
+        assert repeatable_read is True
+        yield connection
+
+    monkeypatch.setattr("app.repositories.dashboard.database_session", capture_session)
+
+    PostgresDashboardRepository("postgresql://query-capture").get(
+        USER_A_ID,
+        date(2026, 1, 1),
+        date(2026, 1, 31),
+        DashboardBucket.daily,
+    )
+
+    categories_query = next(
+        query for query in connection.queries if "expense_totals as" in query
+    )
+    assert "order by expense_totals.amount desc, lower(name), category_id" in categories_query
 
 
 def test_dashboard_repository_builder_uses_configured_database(

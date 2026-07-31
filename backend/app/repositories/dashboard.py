@@ -89,7 +89,7 @@ class InMemoryDashboardRepository:
             self._category_record(user_id, category_id, amount, expense)
             for category_id, amount in category_amounts.items()
         ]
-        categories.sort(key=lambda item: (-item.amount, item.name.casefold()))
+        categories.sort(key=lambda item: (-item.amount, item.name.casefold(), str(item.category_id)))
         return DashboardRecord(
             income=income,
             expense=expense,
@@ -185,7 +185,7 @@ class PostgresDashboardRepository:
             from expense_totals
             cross join total_expense
             where total_expense.amount > 0
-            order by expense_totals.amount desc, lower(name)
+            order by expense_totals.amount desc, lower(name), category_id
         """
         trend_query = f"""
             select
@@ -199,7 +199,7 @@ class PostgresDashboardRepository:
             order by period_start
         """
 
-        with database_session(self.database_url, user_id) as connection:
+        with database_session(self.database_url, user_id, repeatable_read=True) as connection:
             summary = connection.execute(summary_query, (date_from, date_to)).fetchone()
             category_rows = connection.execute(categories_query, (date_from, date_to)).fetchall()
             trend_rows = connection.execute(trend_query, (date_from, date_to)).fetchall()

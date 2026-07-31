@@ -104,6 +104,29 @@
   background: var(--border-default);
 }
 
+.chartSkeleton {
+  display: grid;
+  gap: 20px;
+  min-height: 336px;
+  padding: 24px;
+  border-radius: var(--radius-md);
+}
+
+.chartSkeletonTitle,
+.chartSkeletonBody {
+  border-radius: var(--radius-sm);
+  background: var(--border-default);
+}
+
+.chartSkeletonTitle {
+  width: 44%;
+  min-height: 20px;
+}
+
+.chartSkeletonBody {
+  min-height: 244px;
+}
+
 .stateCard {
   display: grid;
   gap: 12px;

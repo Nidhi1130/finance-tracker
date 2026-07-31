@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import date
+from datetime import date, datetime, timezone
+from decimal import Decimal
+from uuid import UUID
 
 from fastapi.testclient import TestClient
 
-from app.schemas import DashboardBucket
+from app.schemas import DashboardBucket, TxType
+from app.repositories.categories import CategoryRecord, InMemoryCategoryRepository
+from app.repositories.dashboard import InMemoryDashboardRepository
+from app.repositories.transactions import InMemoryTransactionRepository, TransactionRecord
 from app.services.dashboard import select_bucket
 
 
@@ -141,3 +146,67 @@ def test_dashboard_does_not_include_another_users_transactions(
 
     assert response.status_code == 200
     assert response.json()["summary"] == {"income": "0.00", "expense": "0.00", "net": "0.00"}
+
+
+def test_dashboard_in_memory_category_order_breaks_equal_name_and_amount_ties_by_id() -> None:
+    user_id = UUID("10000000-0000-4000-8000-000000000001")
+    first_category_id = UUID("00000000-0000-4000-8000-000000000001")
+    second_category_id = UUID("00000000-0000-4000-8000-000000000002")
+    categories = InMemoryCategoryRepository()
+    categories._globals = {
+        first_category_id: CategoryRecord(
+            id=first_category_id,
+            user_id=None,
+            name="Food",
+            color="#111111",
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        ),
+        second_category_id: CategoryRecord(
+            id=second_category_id,
+            user_id=None,
+            name="food",
+            color="#222222",
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        ),
+    }
+    transactions = InMemoryTransactionRepository()
+    transactions._items = {
+        user_id: {
+            UUID("30000000-0000-4000-8000-000000000001"): TransactionRecord(
+                id=UUID("30000000-0000-4000-8000-000000000001"),
+                user_id=user_id,
+                amount=Decimal("10.00"),
+                type=TxType.expense,
+                description=None,
+                date=date(2026, 1, 1),
+                category_id=second_category_id,
+                account_id=None,
+                created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            ),
+            UUID("30000000-0000-4000-8000-000000000002"): TransactionRecord(
+                id=UUID("30000000-0000-4000-8000-000000000002"),
+                user_id=user_id,
+                amount=Decimal("10.00"),
+                type=TxType.expense,
+                description=None,
+                date=date(2026, 1, 1),
+                category_id=first_category_id,
+                account_id=None,
+                created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            ),
+        }
+    }
+
+    dashboard = InMemoryDashboardRepository(transactions, categories).get(
+        user_id,
+        date(2026, 1, 1),
+        date(2026, 1, 1),
+        DashboardBucket.daily,
+    )
+
+    assert [item.category_id for item in dashboard.categories] == [
+        first_category_id,
+        second_category_id,
+    ]

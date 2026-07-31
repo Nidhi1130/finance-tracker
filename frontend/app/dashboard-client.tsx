@@ -59,6 +59,8 @@ export function DashboardClient() {
     queryKey: dashboardQueryKey(userId, period.from, period.to),
     queryFn: () => getDashboard(period.from, period.to),
     enabled: !configured || Boolean(session),
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey[1] === userId ? previousData : undefined,
   });
 
   function applyPreset(nextPeriod: typeof period) {
@@ -163,11 +165,31 @@ export function DashboardClient() {
       ) : null}
 
       {dashboardQuery.isLoading && !data ? (
-        <div className={styles.summaryGrid} aria-label="Loading dashboard">
-          {["income", "expense", "net"].map((item) => (
-            <div className={styles.skeleton} key={item} />
-          ))}
-        </div>
+        <>
+          <div className={styles.summaryGrid} aria-label="Loading dashboard">
+            {["income", "expense", "net"].map((item) => (
+              <div className={styles.skeleton} key={item} />
+            ))}
+          </div>
+          <div className={styles.chartGrid} aria-label="Loading dashboard charts">
+            <Card
+              aria-label="Loading expense categories chart"
+              className={styles.chartSkeleton}
+              role="status"
+            >
+              <div className={styles.chartSkeletonTitle} />
+              <div className={styles.chartSkeletonBody} />
+            </Card>
+            <Card
+              aria-label="Loading cash-flow chart"
+              className={styles.chartSkeleton}
+              role="status"
+            >
+              <div className={styles.chartSkeletonTitle} />
+              <div className={styles.chartSkeletonBody} />
+            </Card>
+          </div>
+        </>
       ) : null}
 
       {dashboardQuery.isError ? (
