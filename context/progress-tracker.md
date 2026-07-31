@@ -4,12 +4,13 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Phase 2 — Categories & Accounts. In progress; transaction UI verification remains.
+- Phase 3 — Insights Dashboard. In progress; authenticated dashboard smoke
+  coverage remains.
 
 ## Current Goal
 
-- Deliver the locked Phase 2 data model, authenticated category/account CRUD,
-  transaction selectors and filters, isolation tests, and UI smoke coverage.
+- Deliver the authenticated dashboard API, selected-period aggregate views,
+  chart states, and the final signed-in browser smoke coverage.
 
 ## Completed
 
@@ -64,14 +65,32 @@ Update this file after every meaningful implementation change.
   donut and cash flow with grouped income and expense bars. Both charts expose
   semantic text summaries for use without colour or SVG, and each has an
   explicit empty state.
+- The Phase 3 `GET /dashboard` contract now supplies authenticated,
+  user-scoped selected-period income, expense, net, expense-category, and
+  trend aggregates. It defaults to the current UTC month and selects daily,
+  weekly, or monthly buckets from the inclusive range length.
+- The idempotent `transactions_user_date_idx` migration was applied to the
+  configured remote Supabase database and verified as a valid `(user_id, date)`
+  index. No remote application data was modified by this deployment step.
+- Phase 3 automated verification on 2026-07-31 passed: backend `35 passed,
+  1 warning` against isolated PostgreSQL on port 5433; backend Ruff clean;
+  frontend `npm ci`, 14 Vitest tests, lint, and production build all passed.
+- Dashboard client query keys include both authenticated user ID and applied
+  dates, preventing a prior user's dashboard cache from being displayed while
+  another user's request is pending.
 
 ## In Progress
 
 - Full authenticated Phase 2 UI smoke test, including multi-user isolation.
+- Full authenticated Phase 3 dashboard smoke test: selected presets and custom
+  ranges, known `Test purchase` aggregation, empty-range states, Retry after a
+  backend restart, sign-out redirect, and multi-user cache isolation. This
+  remains unverified because no controllable signed-in browser was available
+  in the 2026-07-31 verification session.
 
 ## Next Up
 
-- Complete the authenticated multi-user UI smoke test.
+- Complete the authenticated Phase 2 and Phase 3 multi-user UI smoke tests.
 - Then tighten the root README and repo metadata to match Finance Flow.
 
 ## Open Questions
@@ -111,6 +130,10 @@ Update this file after every meaningful implementation change.
   authenticated click-through scenarios were not observed because no
   controllable browser was attached to this Codex session. Multi-user UI
   isolation therefore remains an explicit verification gap.
+- Phase 3 verification on 2026-07-31 used the existing isolated Docker
+  PostgreSQL container at `127.0.0.1:5433`; the user-owned PostgreSQL listener
+  on port 5432 was not stopped, replaced, or rebound. A browser connection was
+  unavailable, so no authenticated click-through claims are made.
 - Two context PDFs are the authoritative source: the complete project
   guide and the detailed all-phases spec. Phases run 0 → 6; value
   concentrates in Phases 1, 3, and 5. Target: ~4–6 weeks part-time to a
