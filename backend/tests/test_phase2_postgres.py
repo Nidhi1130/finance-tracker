@@ -24,10 +24,17 @@ from app.schemas import AccountCreate, CategoryCreate, DashboardBucket, Transact
 ROOT = Path(__file__).parents[2]
 INIT_SQL = (ROOT / "backend/sql/init.sql").read_text()
 MIGRATION_SQL = (ROOT / "backend/sql/migrations/003_phase_3_dashboard_index.sql").read_text()
+PHASE4_MIGRATION = ROOT / "backend/sql/migrations/004_phase_4_smart_categorization.sql"
 USER_A_ID = UUID("10000000-0000-4000-8000-000000000001")
 USER_B_ID = UUID("20000000-0000-4000-8000-000000000002")
 APP_ROLE = "finance_app_test"
 APP_PASSWORD = "finance_app_test"
+
+
+def apply_sql(postgres_url: str, sql_text: str) -> None:
+    with psycopg.connect(postgres_url, autocommit=True) as connection:
+        connection.execute("select set_config('app.user_id', %s, false)", (str(USER_A_ID),))
+        connection.execute(sql_text)
 
 
 def _app_database_url(admin_url: str) -> str:
@@ -64,7 +71,11 @@ def postgres_url() -> str:
             ),
         )
         connection.execute(f"grant create, usage on schema public to {APP_ROLE}")
+        connection.execute("drop table if exists categorization_rules cascade")
         connection.execute("drop table if exists transactions, accounts, categories cascade")
+        connection.execute(
+            "drop function if exists enforce_categorization_rule_category_ownership()"
+        )
         connection.execute("drop function if exists enforce_transaction_reference_ownership()")
         connection.execute("drop schema if exists auth cascade")
 
@@ -149,6 +160,107 @@ def test_postgres_rls_and_transaction_references(postgres_url: str) -> None:
     assert preserved is not None
     assert preserved.category_id is None
     assert preserved.account_id is None
+
+
+def test_phase4_migration_is_idempotent_and_backfills_transactions(postgres_url: str) -> None:
+    with database_session(postgres_url, USER_A_ID) as connection:
+        connection.execute("drop table if exists categorization_rules cascade")
+        connection.execute(
+            "drop function if exists enforce_categorization_rule_category_ownership()"
+        )
+        connection.execute("alter table transactions drop column if exists category_source")
+        connection.execute("alter table transactions drop column if exists categorization_status")
+        connection.execute("alter table transactions drop column if exists categorized_at")
+        category_id = connection.execute(
+            "insert into categories (user_id, name, color) values (%s, 'Legacy', '#123ABC') returning id",
+            (USER_A_ID,),
+        ).fetchone()["id"]
+        categorized_id = connection.execute(
+            """
+            insert into transactions (user_id, amount, type, date, category_id)
+            values (%s, 20.00, 'expense', '2030-01-02', %s)
+            returning id
+            """,
+            (USER_A_ID, category_id),
+        ).fetchone()["id"]
+        uncategorized_id = connection.execute(
+            """
+            insert into transactions (user_id, amount, type, date)
+            values (%s, 10.00, 'expense', '2030-01-02')
+            returning id
+            """,
+            (USER_A_ID,),
+        ).fetchone()["id"]
+
+    apply_sql(postgres_url, PHASE4_MIGRATION.read_text())
+    apply_sql(postgres_url, PHASE4_MIGRATION.read_text())
+
+    with database_session(postgres_url, USER_A_ID) as connection:
+        metadata = connection.execute(
+            """
+            select id, category_source, categorization_status, categorized_at
+            from transactions
+            where id in (%s, %s)
+            order by id
+            """,
+            (categorized_id, uncategorized_id),
+        ).fetchall()
+
+    by_id = {item["id"]: item for item in metadata}
+    assert by_id[categorized_id]["category_source"] == "manual"
+    assert by_id[categorized_id]["categorization_status"] == "categorized"
+    assert by_id[categorized_id]["categorized_at"] is not None
+    assert by_id[uncategorized_id]["category_source"] is None
+    assert by_id[uncategorized_id]["categorization_status"] == "not_requested"
+    assert by_id[uncategorized_id]["categorized_at"] is None
+
+
+def test_phase4_rules_enforce_category_ownership_and_own_row_rls(postgres_url: str) -> None:
+    categories = PostgresCategoryRepository(postgres_url)
+    user_a_category = categories.create(
+        USER_A_ID,
+        CategoryCreate(name="Rule category", color="#123ABC"),
+    )
+    user_b_category = categories.create(
+        USER_B_ID,
+        CategoryCreate(name="Other rule category", color="#ABC123"),
+    )
+    with database_session(postgres_url, USER_A_ID) as connection:
+        global_category_id = connection.execute(
+            "select id from categories where user_id is null limit 1"
+        ).fetchone()["id"]
+
+    with pytest.raises(psycopg.errors.CheckViolation):
+        with database_session(postgres_url, USER_A_ID) as connection:
+            connection.execute(
+                """
+                insert into categorization_rules (user_id, keyword, category_id)
+                values (%s, 'other', %s)
+                """,
+                (USER_A_ID, user_b_category.id),
+            )
+
+    with database_session(postgres_url, USER_A_ID) as connection:
+        rule = connection.execute(
+            """
+            insert into categorization_rules (user_id, keyword, category_id)
+            values (%s, 'coffee', %s)
+            returning id
+            """,
+            (USER_A_ID, user_a_category.id),
+        ).fetchone()
+        assert rule is not None
+
+    with database_session(postgres_url, USER_B_ID) as connection:
+        assert connection.execute("select id from categorization_rules").fetchall() == []
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            connection.execute(
+                """
+                insert into categorization_rules (user_id, keyword, category_id)
+                values (%s, 'impersonated', %s)
+                """,
+                (USER_A_ID, global_category_id),
+            )
 
 
 def test_dashboard_aggregates_only_the_current_users_transactions(postgres_url: str) -> None:

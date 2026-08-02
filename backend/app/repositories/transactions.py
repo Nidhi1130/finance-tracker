@@ -9,7 +9,14 @@ from uuid import UUID, uuid4
 import psycopg
 
 from app.repositories.base import InvalidReferenceError, database_session
-from app.schemas import TransactionCreate, TransactionOut, TxType, TransactionUpdate
+from app.schemas import (
+    CategorizationSource,
+    CategorizationStatus,
+    TransactionCreate,
+    TransactionOut,
+    TxType,
+    TransactionUpdate,
+)
 
 if TYPE_CHECKING:
     from app.repositories.accounts import AccountRepository
@@ -28,6 +35,9 @@ class TransactionRecord:
     account_id: UUID | None
     created_at: datetime
     updated_at: datetime
+    category_source: CategorizationSource | None = None
+    categorization_status: CategorizationStatus = CategorizationStatus.not_requested
+    categorized_at: datetime | None = None
 
     def to_out(self) -> TransactionOut:
         return TransactionOut.model_validate(
@@ -39,6 +49,9 @@ class TransactionRecord:
                 "date": self.date,
                 "category_id": self.category_id,
                 "account_id": self.account_id,
+                "category_source": self.category_source,
+                "categorization_status": self.categorization_status,
+                "categorized_at": self.categorized_at,
                 "created_at": self.created_at,
                 "updated_at": self.updated_at,
             },
@@ -227,6 +240,13 @@ class PostgresTransactionRepository:
             date=row["date"],
             category_id=UUID(str(row["category_id"])) if row["category_id"] else None,
             account_id=UUID(str(row["account_id"])) if row["account_id"] else None,
+            category_source=(
+                CategorizationSource(str(row["category_source"]))
+                if row["category_source"]
+                else None
+            ),
+            categorization_status=CategorizationStatus(str(row["categorization_status"])),
+            categorized_at=row["categorized_at"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -242,6 +262,15 @@ class PostgresTransactionRepository:
                 "date": row["date"],
                 "category_id": UUID(str(row["category_id"])) if row["category_id"] else None,
                 "account_id": UUID(str(row["account_id"])) if row["account_id"] else None,
+                "category_source": (
+                    CategorizationSource(str(row["category_source"]))
+                    if row["category_source"]
+                    else None
+                ),
+                "categorization_status": CategorizationStatus(
+                    str(row["categorization_status"])
+                ),
+                "categorized_at": row["categorized_at"],
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
             },
@@ -278,7 +307,8 @@ class PostgresTransactionRepository:
 
         query = f"""
             select id, user_id, amount, type, description, date,
-                   category_id, account_id, created_at, updated_at
+                   category_id, account_id, category_source, categorization_status,
+                   categorized_at, created_at, updated_at
             from transactions
             where {" and ".join(conditions)}
             order by date desc, created_at desc
@@ -302,7 +332,8 @@ class PostgresTransactionRepository:
             )
             values (%s, %s, %s, %s, %s, %s, %s, %s)
             returning id, user_id, amount, type, description, date,
-                      category_id, account_id, created_at, updated_at
+                      category_id, account_id, category_source, categorization_status,
+                      categorized_at, created_at, updated_at
         """
 
         params = (
@@ -332,7 +363,8 @@ class PostgresTransactionRepository:
     def get(self, user_id: UUID, transaction_id: UUID) -> TransactionRecord | None:
         query = """
             select id, user_id, amount, type, description, date,
-                   category_id, account_id, created_at, updated_at
+                   category_id, account_id, category_source, categorization_status,
+                   categorized_at, created_at, updated_at
             from transactions
             where id = %s and user_id = current_setting('app.user_id')::uuid
         """
@@ -382,7 +414,8 @@ class PostgresTransactionRepository:
             set {", ".join(assignments)}
             where id = %s and user_id = %s
             returning id, user_id, amount, type, description, date,
-                      category_id, account_id, created_at, updated_at
+                      category_id, account_id, category_source, categorization_status,
+                      categorized_at, created_at, updated_at
         """
         try:
             with database_session(self.database_url, user_id) as connection:

@@ -29,6 +29,19 @@ class TxType(str, Enum):
     expense = "expense"
 
 
+class CategorizationSource(str, Enum):
+    manual = "manual"
+    rule = "rule"
+    openai = "openai"
+
+
+class CategorizationStatus(str, Enum):
+    not_requested = "not_requested"
+    pending = "pending"
+    categorized = "categorized"
+    failed = "failed"
+
+
 PositiveAmount = Annotated[Decimal, Field(gt=0, max_digits=12, decimal_places=2)]
 
 
@@ -58,6 +71,9 @@ class TransactionOut(BaseModel):
     date: Date
     category_id: UUID | None
     account_id: UUID | None
+    category_source: CategorizationSource | None
+    categorization_status: CategorizationStatus
+    categorized_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -114,6 +130,48 @@ class AccountOut(BaseModel):
 
 class AccountListResponse(BaseModel):
     items: list[AccountOut]
+
+
+def normalize_keyword(value: str) -> str:
+    normalized = " ".join(value.split())
+    if not 1 <= len(normalized) <= 120:
+        raise ValueError("keyword must contain between 1 and 120 characters")
+    return normalized
+
+
+def normalize_optional_keyword(value: str | None) -> str | None:
+    return normalize_keyword(value) if value is not None else None
+
+
+class CategorizationRuleCreate(BaseModel):
+    keyword: str
+    category_id: UUID
+    enabled: bool = True
+
+    _normalize_keyword = field_validator("keyword")(normalize_keyword)
+
+
+class CategorizationRuleUpdate(BaseModel):
+    keyword: str | None = None
+    category_id: UUID | None = None
+    enabled: bool | None = None
+
+    _normalize_keyword = field_validator("keyword")(normalize_optional_keyword)
+
+
+class CategorizationRuleOut(BaseModel):
+    id: UUID
+    keyword: str
+    category_id: UUID
+    category_name: str
+    category_color: str
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class CategorizationRuleListResponse(BaseModel):
+    items: list[CategorizationRuleOut]
 
 
 class DashboardBucket(str, Enum):
