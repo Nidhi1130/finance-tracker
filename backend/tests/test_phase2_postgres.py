@@ -392,6 +392,58 @@ def test_postgres_automatic_category_update_loses_to_committed_manual_update(
     assert preserved.categorization_status is CategorizationStatus.categorized
 
 
+def test_postgres_retry_repends_automatic_result_and_preserves_manual_result(
+    postgres_url: str,
+) -> None:
+    categories = PostgresCategoryRepository(postgres_url)
+    transactions = PostgresTransactionRepository(postgres_url)
+    category = categories.create(
+        USER_A_ID,
+        CategoryCreate(name="Retry parity category", color="#456DEF"),
+    )
+    automatic = transactions.create(
+        USER_A_ID,
+        TransactionCreate(
+            amount=Decimal("41.00"),
+            type=TxType.expense,
+            description="Automatic retry parity",
+            date=date(2035, 8, 3),
+        ),
+    )
+    assert transactions.apply_automatic_category(
+        USER_A_ID,
+        automatic.id,
+        category.id,
+        CategorizationSource.rule,
+    ) is not None
+
+    automatic_retry = transactions.prepare_categorization(USER_A_ID, automatic.id)
+
+    assert automatic_retry is not None
+    assert automatic_retry.category_id is None
+    assert automatic_retry.category_source is None
+    assert automatic_retry.categorization_status is CategorizationStatus.pending
+    assert automatic_retry.categorized_at is None
+
+    manual = transactions.create(
+        USER_A_ID,
+        TransactionCreate(
+            amount=Decimal("42.00"),
+            type=TxType.expense,
+            description="Manual retry protection",
+            date=date(2035, 8, 4),
+            category_id=category.id,
+        ),
+    )
+
+    manual_retry = transactions.prepare_categorization(USER_A_ID, manual.id)
+
+    assert manual_retry is not None
+    assert manual_retry.category_id == category.id
+    assert manual_retry.category_source is CategorizationSource.manual
+    assert manual_retry.categorization_status is CategorizationStatus.categorized
+
+
 def test_dashboard_aggregates_only_the_current_users_transactions(postgres_url: str) -> None:
     categories = PostgresCategoryRepository(postgres_url)
     transactions = PostgresTransactionRepository(postgres_url)

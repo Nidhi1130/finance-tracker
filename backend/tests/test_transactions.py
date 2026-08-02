@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.routers import transactions as transactions_router
+from app.schemas import CategorizationSource
 
 
 AuthHeaders = Callable[[str], dict[str, str]]
@@ -338,3 +339,41 @@ def test_retry_returns_202_and_rejects_manual_transaction_with_409(
     assert rejected.status_code == 409
     assert missing.status_code == 404
     assert service.calls == [(DEFAULT_USER_ID, UUID(automatic["id"]))]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [CategorizationSource.rule, CategorizationSource.openai],
+)
+def test_retry_repends_automatic_category_and_schedules_work(
+    source: CategorizationSource,
+    client: TestClient,
+    auth_headers: AuthHeaders,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = CategorizationServiceSpy()
+    monkeypatch.setattr(transactions_router, "categorization_service", service)
+    headers = auth_headers()
+    category = create_category(client, headers, f"Automatic {source.value}")
+    created = create_transaction(client, headers, description="Retry automatic").json()
+    applied = transactions_router.repository.apply_automatic_category(
+        DEFAULT_USER_ID,
+        UUID(created["id"]),
+        UUID(category["id"]),
+        source,
+    )
+    assert applied is not None
+    service.calls.clear()
+
+    response = client.post(
+        f"/transactions/{created['id']}/categorize",
+        headers=headers,
+    )
+
+    assert response.status_code == 202
+    retried = response.json()
+    assert retried["category_id"] is None
+    assert retried["category_source"] is None
+    assert retried["categorization_status"] == "pending"
+    assert retried["categorized_at"] is None
+    assert service.calls == [(DEFAULT_USER_ID, UUID(created["id"]))]

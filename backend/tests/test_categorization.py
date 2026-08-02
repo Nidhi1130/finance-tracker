@@ -4,13 +4,14 @@ from dataclasses import dataclass, field
 from datetime import date
 from datetime import datetime, timezone
 from decimal import Decimal
+from threading import Event, Thread
 from typing import Callable
 from uuid import UUID
 
 from app.repositories.categories import InMemoryCategoryRepository
 from app.repositories.categorization_rules import InMemoryCategorizationRuleRepository
 from app.repositories.categorization_rules import CategorizationRuleRecord
-from app.repositories.transactions import InMemoryTransactionRepository
+from app.repositories.transactions import InMemoryTransactionRepository, TransactionRecord
 from app.schemas import (
     CategorizationRuleCreate,
     CategorizationSource,
@@ -50,6 +51,37 @@ class FakeProvider:
         if self.error is not None:
             raise self.error
         return self.result
+
+
+@dataclass
+class BlockingCategoryRepository(InMemoryCategoryRepository):
+    blocked_category_id: UUID | None = None
+    validation_entered: Event = field(default_factory=Event)
+    release_validation: Event = field(default_factory=Event)
+
+    def is_accessible(self, user_id: UUID, category_id: UUID) -> bool:
+        accessible = super().is_accessible(user_id, category_id)
+        if category_id == self.blocked_category_id:
+            self.validation_entered.set()
+            if not self.release_validation.wait(timeout=2):
+                raise TimeoutError("automatic category validation was not released")
+        return accessible
+
+
+class PausingStatusReadTransactionRecord(TransactionRecord):
+    def pause_next_status_read(self, entered: Event, release: Event) -> None:
+        self._status_read_entered = entered
+        self._release_status_read = release
+        self._pause_status_read = True
+
+    def __getattribute__(self, name: str):
+        value = super().__getattribute__(name)
+        if name == "categorization_status" and getattr(self, "_pause_status_read", False):
+            self._pause_status_read = False
+            self._status_read_entered.set()
+            if not self._release_status_read.wait(timeout=2):
+                raise TimeoutError("status read was not released")
+        return value
 
 
 def categorization_context(provider: FakeProvider | None):
@@ -254,3 +286,132 @@ def test_missing_provider_marks_failed_without_changing_category() -> None:
     assert failed is not None
     assert failed.category_id is None
     assert failed.categorization_status is CategorizationStatus.failed
+
+
+def test_in_memory_automatic_apply_is_atomic_with_manual_update() -> None:
+    categories = BlockingCategoryRepository()
+    transactions = InMemoryTransactionRepository(category_repository=categories)
+    automatic_category = categories.create(
+        USER_ID,
+        CategoryCreate(name="Automatic", color="#CA8A04"),
+    )
+    manual_category = categories.create(
+        USER_ID,
+        CategoryCreate(name="Manual", color="#EA580C"),
+    )
+    transaction = pending_transaction(transactions, "Concurrent merchant")
+    categories.blocked_category_id = automatic_category.id
+    errors: list[BaseException] = []
+
+    def apply_automatic() -> None:
+        try:
+            transactions.apply_automatic_category(
+                USER_ID,
+                transaction.id,
+                automatic_category.id,
+                CategorizationSource.openai,
+            )
+        except BaseException as error:
+            errors.append(error)
+
+    automatic_thread = Thread(target=apply_automatic)
+    automatic_thread.start()
+    assert categories.validation_entered.wait(timeout=1)
+
+    manual_started = Event()
+    manual_done = Event()
+
+    def apply_manual() -> None:
+        manual_started.set()
+        try:
+            transactions.update(
+                USER_ID,
+                transaction.id,
+                TransactionUpdate(category_id=manual_category.id),
+            )
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            manual_done.set()
+
+    manual_thread = Thread(target=apply_manual)
+    manual_thread.start()
+    assert manual_started.wait(timeout=1)
+    manual_completed_before_release = manual_done.wait(timeout=0.2)
+    categories.release_validation.set()
+    automatic_thread.join(timeout=1)
+    manual_thread.join(timeout=1)
+
+    assert not automatic_thread.is_alive()
+    assert not manual_thread.is_alive()
+    assert not manual_completed_before_release
+    assert errors == []
+    preserved = transactions.get(USER_ID, transaction.id)
+    assert preserved is not None
+    assert preserved.category_id == manual_category.id
+    assert preserved.category_source is CategorizationSource.manual
+    assert preserved.categorization_status is CategorizationStatus.categorized
+
+
+def test_in_memory_finish_is_atomic_with_manual_update() -> None:
+    categories = InMemoryCategoryRepository()
+    transactions = InMemoryTransactionRepository(category_repository=categories)
+    manual_category = categories.create(
+        USER_ID,
+        CategoryCreate(name="Manual after failure", color="#EA580C"),
+    )
+    created = pending_transaction(transactions, "Concurrent merchant")
+    transaction = PausingStatusReadTransactionRecord(**created.__dict__)
+    transactions._items[USER_ID][transaction.id] = transaction
+    status_read_entered = Event()
+    release_status_read = Event()
+    transaction.pause_next_status_read(status_read_entered, release_status_read)
+    errors: list[BaseException] = []
+
+    def finish_automatic() -> None:
+        try:
+            transactions.finish_without_category(
+                USER_ID,
+                transaction.id,
+                CategorizationStatus.failed,
+            )
+        except BaseException as error:
+            errors.append(error)
+
+    finish_thread = Thread(target=finish_automatic)
+    finish_thread.start()
+    assert status_read_entered.wait(timeout=1)
+
+    manual_started = Event()
+    manual_done = Event()
+
+    def apply_manual() -> None:
+        manual_started.set()
+        try:
+            transactions.update(
+                USER_ID,
+                transaction.id,
+                TransactionUpdate(category_id=manual_category.id),
+            )
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            manual_done.set()
+
+    manual_thread = Thread(target=apply_manual)
+    manual_thread.start()
+    assert manual_started.wait(timeout=1)
+    manual_completed_before_release = manual_done.wait(timeout=0.2)
+    release_status_read.set()
+    finish_thread.join(timeout=1)
+    manual_thread.join(timeout=1)
+
+    assert not finish_thread.is_alive()
+    assert not manual_thread.is_alive()
+    assert not manual_completed_before_release
+    assert errors == []
+    preserved = transactions.get(USER_ID, transaction.id)
+    assert preserved is not None
+    assert preserved.category_id == manual_category.id
+    assert preserved.category_source is CategorizationSource.manual
+    assert preserved.categorization_status is CategorizationStatus.categorized
