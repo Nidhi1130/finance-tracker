@@ -23,9 +23,12 @@ from app.schemas import (
     AccountCreate,
     CategorizationRuleCreate,
     CategorizationRuleUpdate,
+    CategorizationSource,
+    CategorizationStatus,
     CategoryCreate,
     DashboardBucket,
     TransactionCreate,
+    TransactionUpdate,
     TxType,
 )
 
@@ -343,6 +346,50 @@ def test_postgres_categorization_rule_repository_crud_and_validation(postgres_ur
             USER_A_ID,
             CategorizationRuleCreate(keyword="Unavailable", category_id=unavailable_category.id),
         )
+
+
+def test_postgres_automatic_category_update_loses_to_committed_manual_update(
+    postgres_url: str,
+) -> None:
+    categories = PostgresCategoryRepository(postgres_url)
+    transactions = PostgresTransactionRepository(postgres_url)
+    manual_category = categories.create(
+        USER_A_ID,
+        CategoryCreate(name="Committed manual category", color="#123ABC"),
+    )
+    automatic_category = categories.create(
+        USER_A_ID,
+        CategoryCreate(name="Late automatic category", color="#ABC123"),
+    )
+    transaction = transactions.create(
+        USER_A_ID,
+        TransactionCreate(
+            amount=Decimal("40.00"),
+            type=TxType.expense,
+            description="Concurrent merchant",
+            date=date(2035, 8, 2),
+        ),
+    )
+    manually_updated = transactions.update(
+        USER_A_ID,
+        transaction.id,
+        TransactionUpdate(category_id=manual_category.id),
+    )
+
+    automatic_result = transactions.apply_automatic_category(
+        USER_A_ID,
+        transaction.id,
+        automatic_category.id,
+        CategorizationSource.openai,
+    )
+
+    assert manually_updated is not None
+    assert automatic_result is None
+    preserved = transactions.get(USER_A_ID, transaction.id)
+    assert preserved is not None
+    assert preserved.category_id == manual_category.id
+    assert preserved.category_source is CategorizationSource.manual
+    assert preserved.categorization_status is CategorizationStatus.categorized
 
 
 def test_dashboard_aggregates_only_the_current_users_transactions(postgres_url: str) -> None:

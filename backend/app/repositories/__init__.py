@@ -30,6 +30,7 @@ from app.repositories.dashboard import (
 from app.repositories.transactions import (
     InMemoryTransactionRepository,
     PostgresTransactionRepository,
+    TransactionRecord,
     TransactionRepository,
 )
 
@@ -99,6 +100,10 @@ __all__ = [
     "DuplicateResourceError",
     "ForbiddenResourceError",
     "InvalidReferenceError",
+    "InMemoryTransactionRepository",
+    "PostgresTransactionRepository",
+    "TransactionRecord",
+    "TransactionRepository",
     "account_repository",
     "build_account_repository",
     "build_categorization_rule_repository",

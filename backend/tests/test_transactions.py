@@ -1,12 +1,24 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+import pytest
 from fastapi.testclient import TestClient
+
+from app.routers import transactions as transactions_router
 
 
 AuthHeaders = Callable[[str], dict[str, str]]
+DEFAULT_USER_ID = UUID("10000000-0000-4000-8000-000000000001")
+
+
+class CategorizationServiceSpy:
+    def __init__(self) -> None:
+        self.calls: list[tuple[UUID, UUID]] = []
+
+    def categorize(self, user_id: UUID, transaction_id: UUID) -> None:
+        self.calls.append((user_id, transaction_id))
 
 
 def create_category(client: TestClient, headers: dict[str, str], name: str) -> dict:
@@ -232,3 +244,97 @@ def test_transaction_validation_and_bad_ids(
     ).status_code == 422
     assert client.get("/transactions/not-a-uuid", headers=headers).status_code == 422
     assert client.get(f"/transactions/{uuid4()}", headers=headers).status_code == 404
+
+
+def test_manual_category_creation_does_not_schedule_background_work(
+    client: TestClient,
+    auth_headers: AuthHeaders,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = CategorizationServiceSpy()
+    monkeypatch.setattr(transactions_router, "categorization_service", service, raising=False)
+    headers = auth_headers()
+    category = create_category(client, headers, "Manual choice")
+
+    response = create_transaction(client, headers, category_id=category["id"])
+
+    assert response.status_code == 201
+    assert response.json()["category_source"] == "manual"
+    assert response.json()["categorization_status"] == "categorized"
+    assert response.json()["categorized_at"] is not None
+    assert service.calls == []
+
+
+def test_explicitly_clearing_category_resets_categorization_metadata(
+    client: TestClient,
+    auth_headers: AuthHeaders,
+) -> None:
+    headers = auth_headers()
+    category = create_category(client, headers, "Category to clear")
+    created = create_transaction(client, headers, category_id=category["id"]).json()
+
+    response = client.put(
+        f"/transactions/{created['id']}",
+        headers=headers,
+        json={"category_id": None},
+    )
+
+    assert response.status_code == 200
+    cleared = response.json()
+    assert cleared["category_id"] is None
+    assert cleared["category_source"] is None
+    assert cleared["categorization_status"] == "not_requested"
+    assert cleared["categorized_at"] is None
+
+
+def test_uncategorized_creation_returns_pending_and_schedules_work(
+    client: TestClient,
+    auth_headers: AuthHeaders,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = CategorizationServiceSpy()
+    monkeypatch.setattr(transactions_router, "categorization_service", service, raising=False)
+    headers = auth_headers()
+
+    response = create_transaction(client, headers, description="Needs a category")
+
+    assert response.status_code == 201
+    created = response.json()
+    assert created["category_id"] is None
+    assert created["category_source"] is None
+    assert created["categorization_status"] == "pending"
+    assert created["categorized_at"] is None
+    assert service.calls == [(DEFAULT_USER_ID, UUID(created["id"]))]
+
+
+def test_retry_returns_202_and_rejects_manual_transaction_with_409(
+    client: TestClient,
+    auth_headers: AuthHeaders,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = CategorizationServiceSpy()
+    monkeypatch.setattr(transactions_router, "categorization_service", service, raising=False)
+    headers = auth_headers()
+    automatic = create_transaction(client, headers, description="Retry me").json()
+    service.calls.clear()
+
+    retried = client.post(
+        f"/transactions/{automatic['id']}/categorize",
+        headers=headers,
+    )
+
+    assert retried.status_code == 202
+    assert retried.json()["categorization_status"] == "pending"
+    assert service.calls == [(DEFAULT_USER_ID, UUID(automatic["id"]))]
+
+    category = create_category(client, headers, "Protected manual choice")
+    manual = create_transaction(client, headers, category_id=category["id"]).json()
+    rejected = client.post(
+        f"/transactions/{manual['id']}/categorize",
+        headers=headers,
+    )
+    missing = client.post(f"/transactions/{uuid4()}/categorize", headers=headers)
+
+    assert rejected.status_code == 409
+    assert missing.status_code == 404
+    assert service.calls == [(DEFAULT_USER_ID, UUID(automatic["id"]))]

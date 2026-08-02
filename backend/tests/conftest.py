@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 
 os.environ.pop("DATABASE_URL", None)
+os.environ.pop("OPENAI_API_KEY", None)
 os.environ.pop("SUPABASE_URL", None)
 os.environ.pop("SUPABASE_JWT_SECRET", None)
 
