@@ -14,7 +14,12 @@ os.environ.pop("SUPABASE_URL", None)
 os.environ.pop("SUPABASE_JWT_SECRET", None)
 
 from app.main import app
-from app.repositories import account_repository, category_repository, transaction_repository
+from app.repositories import (
+    account_repository,
+    categorization_rule_repository,
+    category_repository,
+    transaction_repository,
+)
 
 
 USER_A_ID = "10000000-0000-4000-8000-000000000001"
@@ -57,6 +62,7 @@ def user_b_id() -> str:
 
 @pytest.fixture(autouse=True)
 def clear_repositories() -> None:
+    categorization_rule_repository.clear()
     transaction_repository.clear()
     category_repository.clear()
     account_repository.clear()

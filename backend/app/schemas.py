@@ -156,6 +156,13 @@ class CategorizationRuleUpdate(BaseModel):
     category_id: UUID | None = None
     enabled: bool | None = None
 
+    @field_validator("keyword", "category_id", "enabled", mode="before")
+    @classmethod
+    def reject_null_values(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("rule update values cannot be null")
+        return value
+
     _normalize_keyword = field_validator("keyword")(normalize_optional_keyword)
 
 

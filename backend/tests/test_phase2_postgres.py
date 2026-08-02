@@ -14,11 +14,20 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 
 from app.repositories.accounts import PostgresAccountRepository
-from app.repositories.base import InvalidReferenceError, database_session
+from app.repositories.base import DuplicateResourceError, InvalidReferenceError, database_session
+from app.repositories.categorization_rules import PostgresCategorizationRuleRepository
 from app.repositories.categories import PostgresCategoryRepository
 from app.repositories.dashboard import PostgresDashboardRepository
 from app.repositories.transactions import PostgresTransactionRepository
-from app.schemas import AccountCreate, CategoryCreate, DashboardBucket, TransactionCreate, TxType
+from app.schemas import (
+    AccountCreate,
+    CategorizationRuleCreate,
+    CategorizationRuleUpdate,
+    CategoryCreate,
+    DashboardBucket,
+    TransactionCreate,
+    TxType,
+)
 
 
 ROOT = Path(__file__).parents[2]
@@ -250,9 +259,18 @@ def test_phase4_rules_enforce_category_ownership_and_own_row_rls(postgres_url: s
             (USER_A_ID, user_a_category.id),
         ).fetchone()
         assert rule is not None
+        rule_id = rule["id"]
 
     with database_session(postgres_url, USER_B_ID) as connection:
         assert connection.execute("select id from categorization_rules").fetchall() == []
+        assert connection.execute(
+            "update categorization_rules set enabled = false where id = %s",
+            (rule_id,),
+        ).rowcount == 0
+        assert connection.execute(
+            "delete from categorization_rules where id = %s",
+            (rule_id,),
+        ).rowcount == 0
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             connection.execute(
                 """
@@ -261,6 +279,70 @@ def test_phase4_rules_enforce_category_ownership_and_own_row_rls(postgres_url: s
                 """,
                 (USER_A_ID, global_category_id),
             )
+
+    with database_session(postgres_url, USER_A_ID) as connection:
+        assert connection.execute(
+            "select enabled from categorization_rules where id = %s",
+            (rule_id,),
+        ).fetchone()["enabled"] is True
+
+
+def test_postgres_categorization_rule_repository_crud_and_validation(postgres_url: str) -> None:
+    categories = PostgresCategoryRepository(postgres_url)
+    rules = PostgresCategorizationRuleRepository(postgres_url)
+    private_category = categories.create(
+        USER_A_ID,
+        CategoryCreate(name="Repository rule category", color="#123ABC"),
+    )
+    unavailable_category = categories.create(
+        USER_B_ID,
+        CategoryCreate(name="Unavailable rule category", color="#ABC123"),
+    )
+
+    first = rules.create(
+        USER_A_ID,
+        CategorizationRuleCreate(keyword="Zulu", category_id=private_category.id),
+    )
+    second = rules.create(
+        USER_A_ID,
+        CategorizationRuleCreate(
+            keyword="Alpha",
+            category_id=private_category.id,
+            enabled=False,
+        ),
+    )
+
+    assert (first.category_name, first.category_color) == ("Repository rule category", "#123ABC")
+    listed_ids = [item.id for item in rules.list(USER_A_ID)]
+    assert [item_id for item_id in listed_ids if item_id in {first.id, second.id}] == [
+        second.id,
+        first.id,
+    ]
+    enabled_ids = {item.id for item in rules.list(USER_A_ID, enabled_only=True)}
+    assert first.id in enabled_ids
+    assert second.id not in enabled_ids
+
+    updated = rules.update(
+        USER_A_ID,
+        second.id,
+        CategorizationRuleUpdate(keyword="Beta", enabled=True),
+    )
+    assert updated is not None
+    assert (updated.keyword, updated.enabled) == ("Beta", True)
+    assert rules.get(USER_B_ID, first.id) is None
+    assert rules.delete(USER_A_ID, first.id)
+    assert rules.get(USER_A_ID, first.id) is None
+
+    with pytest.raises(DuplicateResourceError):
+        rules.create(
+            USER_A_ID,
+            CategorizationRuleCreate(keyword="BETA", category_id=private_category.id),
+        )
+    with pytest.raises(InvalidReferenceError, match="category_id"):
+        rules.create(
+            USER_A_ID,
+            CategorizationRuleCreate(keyword="Unavailable", category_id=unavailable_category.id),
+        )
 
 
 def test_dashboard_aggregates_only_the_current_users_transactions(postgres_url: str) -> None:

@@ -17,6 +17,11 @@ from app.repositories.categories import (
     InMemoryCategoryRepository,
     PostgresCategoryRepository,
 )
+from app.repositories.categorization_rules import (
+    CategorizationRuleRepository,
+    InMemoryCategorizationRuleRepository,
+    PostgresCategorizationRuleRepository,
+)
 from app.repositories.dashboard import (
     DashboardRepository,
     InMemoryDashboardRepository,
@@ -56,9 +61,19 @@ def build_transaction_repository(
     )
 
 
+def build_categorization_rule_repository(
+    categories: CategoryRepository | None = None,
+) -> CategorizationRuleRepository:
+    database_url = getenv("DATABASE_URL")
+    if database_url:
+        return PostgresCategorizationRuleRepository(database_url)
+    return InMemoryCategorizationRuleRepository(category_repository=categories)
+
+
 category_repository = build_category_repository()
 account_repository = build_account_repository()
 transaction_repository = build_transaction_repository(category_repository, account_repository)
+categorization_rule_repository = build_categorization_rule_repository(category_repository)
 if isinstance(transaction_repository, InMemoryTransactionRepository):
     if isinstance(category_repository, InMemoryCategoryRepository):
         category_repository.set_delete_callback(
@@ -86,10 +101,12 @@ __all__ = [
     "InvalidReferenceError",
     "account_repository",
     "build_account_repository",
+    "build_categorization_rule_repository",
     "build_category_repository",
     "build_dashboard_repository",
     "build_transaction_repository",
     "category_repository",
+    "categorization_rule_repository",
     "dashboard_repository",
     "transaction_repository",
 ]
