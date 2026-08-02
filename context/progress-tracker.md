@@ -78,6 +78,9 @@ Update this file after every meaningful implementation change.
 - Dashboard client query keys include both authenticated user ID and applied
   dates, preventing a prior user's dashboard cache from being displayed while
   another user's request is pending.
+- The Phase 4 Rules page now provides authenticated, user-scoped rule CRUD
+  through FastAPI, including category selection, enable/disable controls, and
+  user-isolated TanStack Query caches.
 
 ## In Progress
 

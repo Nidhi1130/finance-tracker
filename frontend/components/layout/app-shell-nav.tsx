@@ -13,6 +13,7 @@ const navigationItems = [
   { href: "/transactions", label: "Transactions" },
   { href: "/categories", label: "Categories" },
   { href: "/accounts", label: "Accounts" },
+  { href: "/rules", label: "Rules" },
 ];
 
 interface AppShellNavProps {
