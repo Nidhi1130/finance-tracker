@@ -159,8 +159,11 @@ class InMemoryCategorizationRuleRepository:
 
     def _is_duplicate(self, user_id: UUID, keyword: str, exclude: UUID | None = None) -> bool:
         return any(
-            record.id != exclude and record.keyword.casefold() == keyword.casefold()
-            for record in self._items.get(user_id, {}).values()
+            record is not None
+            and record.id != exclude
+            and record.keyword.casefold() == keyword.casefold()
+            for rule_id in list(self._items.get(user_id, {}))
+            if (record := self._available_record(user_id, rule_id)) is not None
         )
 
     def _require_category(self, user_id: UUID, category_id: UUID) -> CategoryRecord:

@@ -183,6 +183,42 @@ def test_rules_for_deleted_categories_are_not_found(
     assert client.delete(f"/categorization-rules/{rule['id']}", headers=headers).status_code == 404
 
 
+def test_rules_for_deleted_categories_do_not_block_keyword_reuse(
+    client: TestClient,
+    auth_headers: AuthHeaders,
+) -> None:
+    headers = auth_headers()
+    deleted_category = client.post(
+        "/categories",
+        headers=headers,
+        json={"name": "Old category", "color": "#123ABC"},
+    ).json()
+    assert create_rule(
+        client,
+        headers,
+        keyword="coffee",
+        category_id=deleted_category["id"],
+    ).status_code == 201
+
+    assert client.delete(f"/categories/{deleted_category['id']}", headers=headers).status_code == 204
+    replacement_category = client.post(
+        "/categories",
+        headers=headers,
+        json={"name": "Replacement category", "color": "#ABC123"},
+    ).json()
+
+    replacement = create_rule(
+        client,
+        headers,
+        keyword="coffee",
+        category_id=replacement_category["id"],
+    )
+    assert replacement.status_code == 201
+    assert client.get("/categorization-rules", headers=headers).json()["items"] == [
+        replacement.json()
+    ]
+
+
 @pytest.mark.parametrize("payload", [{"keyword": None}, {"category_id": None}, {"enabled": None}])
 def test_rule_update_rejects_explicit_null_values(
     client: TestClient,
