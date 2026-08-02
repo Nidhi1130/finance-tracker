@@ -208,4 +208,24 @@ describe("RulesManager", () => {
     expect(screen.queryByText("spotify")).not.toBeInTheDocument();
     expect(screen.getByText("Loading categorization rules...")).toBeInTheDocument();
   });
+
+  it("closes an open User A editor before showing User B's rules", async () => {
+    listCategorizationRulesMock.mockResolvedValueOnce([rule]);
+    listCategorizationRulesMock.mockResolvedValueOnce([]);
+    const { queryClient, rerender } = renderRulesManager();
+
+    await screen.findByText("spotify");
+    fireEvent.click(screen.getByRole("button", { name: "Edit spotify" }));
+    expect(screen.getByRole("heading", { name: "Edit rule" })).toBeInTheDocument();
+
+    signedInAs("user-b");
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <RulesManager />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(listCategorizationRulesMock).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("heading", { name: "Edit rule" })).not.toBeInTheDocument();
+  });
 });

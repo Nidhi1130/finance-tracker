@@ -35,6 +35,12 @@ const initialEditor: EditorState = {
 };
 
 export function RulesManager() {
+  const { session } = useAuth();
+
+  return <RulesManagerContent key={session?.user.id ?? "development-user"} />;
+}
+
+function RulesManagerContent() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { configured, loading: authLoading, session } = useAuth();
