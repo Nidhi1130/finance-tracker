@@ -81,6 +81,9 @@ Update this file after every meaningful implementation change.
 - The Phase 4 Rules page now provides authenticated, user-scoped rule CRUD
   through FastAPI, including category selection, enable/disable controls, and
   user-isolated TanStack Query caches.
+- The Phase 4 Transactions page now shows pending, failed, rule, and OpenAI
+  categorization states; polls only while work is pending; supports retry; and
+  offers explicit, editable rule creation after a saved automatic correction.
 
 ## In Progress
 

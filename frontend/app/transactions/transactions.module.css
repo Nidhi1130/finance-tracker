@@ -98,6 +98,30 @@
   gap: 8px;
 }
 
+.autoBadge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+  color: var(--accent-primary);
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.ruleForm,
+.ruleLabel {
+  display: grid;
+  gap: 12px;
+}
+
+.ruleLabel {
+  gap: 8px;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
 .pill {
   display: inline-flex;
   align-items: center;
