@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ROOT = Path(__file__).parents[2]
 INIT_SQL = (ROOT / "backend/sql/init.sql").read_text()
 MIGRATION_SQL = (

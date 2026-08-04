@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Protocol
 from uuid import UUID, uuid4
@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 import psycopg
 
 from app.repositories.base import InvalidReferenceError, database_session
-from app.schemas import TransactionCreate, TransactionOut, TxType, TransactionUpdate
+from app.schemas import TransactionCreate, TransactionOut, TransactionUpdate, TxType
 
 if TYPE_CHECKING:
     from app.repositories.accounts import AccountRepository
@@ -109,7 +109,7 @@ class InMemoryTransactionRepository:
 
     def create(self, user_id: UUID, payload: TransactionCreate) -> TransactionRecord:
         self._validate_references(user_id, payload.category_id, payload.account_id)
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         record = TransactionRecord(
             id=uuid4(),
             user_id=user_id,
@@ -158,7 +158,7 @@ class InMemoryTransactionRepository:
             record.category_id = data["category_id"]
         if "account_id" in data:
             record.account_id = data["account_id"]
-        record.updated_at = datetime.now(tz=timezone.utc)
+        record.updated_at = datetime.now(tz=UTC)
         return record
 
     def delete(self, user_id: UUID, transaction_id: UUID) -> bool:
@@ -203,13 +203,13 @@ class InMemoryTransactionRepository:
         for record in self._items.get(user_id, {}).values():
             if record.category_id == category_id:
                 record.category_id = None
-                record.updated_at = datetime.now(tz=timezone.utc)
+                record.updated_at = datetime.now(tz=UTC)
 
     def clear_account_reference(self, user_id: UUID, account_id: UUID) -> None:
         for record in self._items.get(user_id, {}).values():
             if record.account_id == account_id:
                 record.account_id = None
-                record.updated_at = datetime.now(tz=timezone.utc)
+                record.updated_at = datetime.now(tz=UTC)
 
 
 @dataclass
@@ -411,9 +411,8 @@ class PostgresTransactionRepository:
         return result.rowcount > 0
 
     def clear(self) -> None:
-        with psycopg.connect(self.database_url) as connection:
-            with connection.transaction():
-                connection.execute("delete from transactions")
+        with psycopg.connect(self.database_url) as connection, connection.transaction():
+            connection.execute("delete from transactions")
 
     @staticmethod
     def _validate_references(

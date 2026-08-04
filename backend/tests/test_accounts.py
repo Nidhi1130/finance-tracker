@@ -5,7 +5,6 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-
 AuthHeaders = Callable[[str], dict[str, str]]
 
 

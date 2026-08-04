@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+from typing import Self
 from uuid import UUID
 
 import psycopg
@@ -18,8 +19,13 @@ from app.repositories.base import InvalidReferenceError, database_session
 from app.repositories.categories import PostgresCategoryRepository
 from app.repositories.dashboard import PostgresDashboardRepository
 from app.repositories.transactions import PostgresTransactionRepository
-from app.schemas import AccountCreate, CategoryCreate, DashboardBucket, TransactionCreate, TxType
-
+from app.schemas import (
+    AccountCreate,
+    CategoryCreate,
+    DashboardBucket,
+    TransactionCreate,
+    TxType,
+)
 
 ROOT = Path(__file__).parents[2]
 INIT_SQL = (ROOT / "backend/sql/init.sql").read_text()
@@ -136,12 +142,14 @@ def test_postgres_rls_and_transaction_references(postgres_url: str) -> None:
         )
     assert account_error.value.field == "account_id"
 
-    with pytest.raises(psycopg.errors.InsufficientPrivilege):
-        with database_session(postgres_url, USER_A_ID) as connection:
-            connection.execute(
-                "insert into accounts (user_id, name) values (%s, 'Impersonated')",
-                (USER_B_ID,),
-            )
+    with (
+        pytest.raises(psycopg.errors.InsufficientPrivilege),
+        database_session(postgres_url, USER_A_ID) as connection,
+    ):
+        connection.execute(
+            "insert into accounts (user_id, name) values (%s, 'Impersonated')",
+            (USER_B_ID,),
+        )
 
     assert categories.delete(USER_A_ID, user_a_category.id)
     assert accounts.delete(USER_A_ID, user_a_account.id)
@@ -492,7 +500,7 @@ def test_database_session_sets_repeatable_read_before_the_rls_user_context(
         def __init__(self) -> None:
             self.queries: list[tuple[str, tuple[str, ...]]] = []
 
-        def __enter__(self) -> Connection:
+        def __enter__(self) -> Self:
             return self
 
         def __exit__(self, _exc_type: object, _exc: object, _traceback: object) -> None:

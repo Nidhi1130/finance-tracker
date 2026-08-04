@@ -10,8 +10,12 @@ from app.repositories import (
     ForbiddenResourceError,
     category_repository,
 )
-from app.schemas import CategoryCreate, CategoryListResponse, CategoryOut, CategoryUpdate
-
+from app.schemas import (
+    CategoryCreate,
+    CategoryListResponse,
+    CategoryOut,
+    CategoryUpdate,
+)
 
 router = APIRouter(prefix="/categories", tags=["categories"])
 
