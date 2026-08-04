@@ -4,13 +4,14 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Phase 3 — Insights Dashboard. In progress; authenticated dashboard smoke
-  coverage remains.
+- Phase 4 — Smart Categorization. Implementation, remote schema deployment,
+  rule-only smoke, and automated verification are complete; authenticated
+  browser smoke remains unavailable.
 
 ## Current Goal
 
-- Deliver the authenticated dashboard API, selected-period aggregate views,
-  chart states, and the final signed-in browser smoke coverage.
+- Preserve the explicit Phase 2–4 authenticated browser verification gaps,
+  then begin Phase 5 deployment planning.
 
 ## Completed
 
@@ -84,6 +85,22 @@ Update this file after every meaningful implementation change.
 - The Phase 4 Transactions page now shows pending, failed, rule, and OpenAI
   categorization states; polls only while work is pending; supports retry; and
   offers explicit, editable rule creation after a saved automatic correction.
+- Phase 4 categorization defaults to deterministic `rules` mode. An ambient
+  OpenAI key is ignored, unmatched descriptions finish `not_requested`, and no
+  OpenAI client or request is created. OpenAI remains available only through
+  explicit `CATEGORIZATION_PROVIDER=openai`; unsupported modes fail startup.
+- Migration `004_phase_4_smart_categorization.sql` was applied by itself to
+  the configured remote Supabase database. Read-only verification confirmed
+  the rules table, all columns and constraints, forced RLS and own-rows policy,
+  ownership trigger, unique keyword index, zero incomplete backfill rows, and
+  three correctly backfilled manual transactions.
+- The Phase 4 rule-only smoke passed with an ambient OpenAI key present: a
+  `spotify` rule categorized its match, an unmatched description finished
+  `not_requested`, and the configured provider remained absent.
+- Phase 4 automated verification on 2026-08-04 passed: backend `89 passed,
+  1 warning` against isolated PostgreSQL on port 5433; backend Ruff and lock
+  checks clean; frontend `47 passed` across 8 files, lint, and production build
+  all passed.
 
 ## In Progress
 
@@ -93,11 +110,17 @@ Update this file after every meaningful implementation change.
   backend restart, sign-out redirect, and multi-user cache isolation. This
   remains unverified because no controllable signed-in browser was available
   in the 2026-07-31 verification session.
+- Full authenticated Phase 4 smoke test: manual bypass, rule categorization and
+  badge, rules-mode unmatched behavior, late manual override protection,
+  correction dismissal, correction-to-rule creation/editing, and real User A
+  to User B data/cache isolation. The 2026-08-04 browser runtime exposed no
+  controllable browser, so none of these are claimed as live observations.
 
 ## Next Up
 
-- Complete the authenticated Phase 2 and Phase 3 multi-user UI smoke tests.
-- Then tighten the root README and repo metadata to match Finance Flow.
+- Complete the authenticated Phase 2, Phase 3, and Phase 4 multi-user UI smoke
+  tests when a controllable signed-in browser is available.
+- Begin Phase 5 deployment planning and select the backend host.
 
 ## Open Questions
 
@@ -105,8 +128,6 @@ Update this file after every meaningful implementation change.
   currently uses proposed default tokens (light theme). Confirm or replace.
 - **Backend host for deployment (Phase 5):** Render vs. Fly.io vs. Railway
   — decide before Phase 5. All free tiers may cold-start after idle.
-- **LLM provider (Phase 4):** Anthropic vs. OpenAI. Decide before Phase 4;
-  keep rule-based categorization primary to keep cost near zero.
 
 ## Architecture Decisions
 
@@ -122,6 +143,9 @@ Update this file after every meaningful implementation change.
   the API's per-user scoping.
 - **Categorization runs as a FastAPI background task** — creating a
   transaction stays fast; the category fills in shortly after.
+- **Rule-only categorization is the default** — user rules require no paid
+  provider. OpenAI is retained as a server-side future option and requires the
+  explicit `CATEGORIZATION_PROVIDER=openai` opt-in.
 - **CSS Modules, no component library** — scoped styles per component;
   charts via Recharts; data fetching via TanStack Query.
 
@@ -140,6 +164,12 @@ Update this file after every meaningful implementation change.
   PostgreSQL container at `127.0.0.1:5433`; the user-owned PostgreSQL listener
   on port 5432 was not stopped, replaced, or rebound. A browser connection was
   unavailable, so no authenticated click-through claims are made.
+- Phase 4 release verification on 2026-08-04 reused the same isolated
+  PostgreSQL test port and the configured remote Supabase backend. A live
+  OpenAI smoke returned `429 credit_balance_exhausted`; the user then approved
+  rule-only default behavior so paid-provider access is no longer a Phase 4
+  requirement. Browser discovery returned no available browser types, so the
+  Phase 4 click-through scenarios remain explicitly unverified.
 - Two context PDFs are the authoritative source: the complete project
   guide and the detailed all-phases spec. Phases run 0 → 6; value
   concentrates in Phases 1, 3, and 5. Target: ~4–6 weeks part-time to a

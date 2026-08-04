@@ -25,7 +25,7 @@
 - `backend/app/routers/` (or `api/`) — HTTP endpoints; thin, focused on
   parsing input, enforcing auth, and shaping responses.
 - `backend/app/services/` — business logic (aggregation queries,
-  categorization rules + LLM fallback, bank import).
+  categorization rules + optional provider boundary, bank import).
 - Supabase — hosted Postgres + Auth. Owns the `auth.users` table and JWT
   issuance; enforces Row Level Security.
 
@@ -56,6 +56,26 @@
   ownership policies. Backend transactions set local `app.user_id` from the
   verified JWT subject.
 
+### Phase 4 smart categorization
+
+- `categorization_rules` stores user-owned keyword-to-category mappings.
+  Forced RLS scopes every rule operation to the transaction-local
+  `app.user_id`; a trigger permits only global or same-user categories.
+- `transactions` records the categorization source (`manual`, `rule`, or
+  `openai`), lifecycle status, and completion timestamp.
+- Manual selection is authoritative. A background result is written only if
+  the transaction is still pending and uncategorized, so a late result cannot
+  overwrite a committed manual edit.
+- Rule matching is deterministic and always runs before an external provider.
+  The default `CATEGORIZATION_PROVIDER=rules` creates no OpenAI provider and a
+  no-match result becomes `not_requested`.
+- OpenAI is an optional server-side boundary enabled only by
+  `CATEGORIZATION_PROVIDER=openai`. It receives description, transaction type,
+  and visible category IDs/names only; amounts, accounts, user IDs, tokens, and
+  other transaction data stay inside the application.
+- Unsupported provider modes fail during startup. OpenAI errors produce the
+  existing failed/Retry lifecycle only in explicit OpenAI mode.
+
 ## Auth and Access Model
 
 - Every user signs in via Supabase Auth (email/password or magic link).
@@ -79,7 +99,8 @@
    never from the request body, never trusted from the client.
 4. Every DB query is scoped to the current user; RLS enforces the same
    scoping at the database layer even if application code slips.
-5. Long-running work (LLM categorization, bank import) runs as a
-   background task. Request handlers stay fast and do not block on it.
+5. Categorization and bank-import work runs as a background task. Request
+   handlers stay fast and do not block on it; external categorization is
+   explicit opt-in, never inferred from the presence of a key.
 6. Each phase ships as a working, demoable app. A phase is not started
    until the previous phase's "done when" criteria are met.
