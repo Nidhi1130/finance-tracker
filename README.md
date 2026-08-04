@@ -6,12 +6,12 @@ A modern AI-powered personal finance tracker built with Next.js, FastAPI, and Su
 
 ## 🚀 Planned Features
 
-- [ ] Transaction CRUD
-- [ ] Categories
-- [ ] Accounts
+- [x] Transaction CRUD
+- [x] Categories
+- [x] Accounts
 - [ ] Dashboard & Analytics
 - [ ] Smart AI Categorization
-- [ ] Authentication
+- [x] Authentication
 - [ ] Deployment
 - [ ] Open Banking Integration
 
@@ -54,7 +54,9 @@ finance-tracker/
 
 ## 📌 Project Status
 
-🚧 Currently under development.
+🚧 Currently under development. Transaction management, categories, accounts,
+and Supabase-authenticated user isolation are implemented. Dashboard analytics,
+AI categorization, deployment, and Open Banking remain planned work.
 
 This project is being built phase by phase to demonstrate modern full-stack software engineering practices.
 

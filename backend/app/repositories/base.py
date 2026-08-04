@@ -25,8 +25,15 @@ class InvalidReferenceError(Exception):
 
 
 @contextmanager
-def database_session(database_url: str, user_id: UUID) -> Iterator[Connection]:
+def database_session(
+    database_url: str,
+    user_id: UUID,
+    *,
+    repeatable_read: bool = False,
+) -> Iterator[Connection]:
     with psycopg.connect(database_url, row_factory=dict_row) as connection, connection.transaction():
+        if repeatable_read:
+            connection.execute("set transaction isolation level repeatable read")
         connection.execute(
             "select set_config('app.user_id', %s, true)",
             (str(user_id),),

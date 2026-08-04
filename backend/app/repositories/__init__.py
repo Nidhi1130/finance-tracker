@@ -17,6 +17,11 @@ from app.repositories.categories import (
     InMemoryCategoryRepository,
     PostgresCategoryRepository,
 )
+from app.repositories.dashboard import (
+    DashboardRepository,
+    InMemoryDashboardRepository,
+    PostgresDashboardRepository,
+)
 from app.repositories.transactions import (
     InMemoryTransactionRepository,
     PostgresTransactionRepository,
@@ -65,6 +70,16 @@ if isinstance(transaction_repository, InMemoryTransactionRepository):
         )
 
 
+def build_dashboard_repository() -> DashboardRepository:
+    database_url = getenv("DATABASE_URL")
+    if database_url:
+        return PostgresDashboardRepository(database_url)
+    return InMemoryDashboardRepository(transaction_repository, category_repository)
+
+
+dashboard_repository = build_dashboard_repository()
+
+
 __all__ = [
     "DuplicateResourceError",
     "ForbiddenResourceError",
@@ -72,7 +87,9 @@ __all__ = [
     "account_repository",
     "build_account_repository",
     "build_category_repository",
+    "build_dashboard_repository",
     "build_transaction_repository",
     "category_repository",
+    "dashboard_repository",
     "transaction_repository",
 ]
