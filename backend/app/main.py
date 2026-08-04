@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.routers.accounts import router as accounts_router
+from app.routers.categories import router as categories_router
 from app.routers.transactions import router as transactions_router
 
 
@@ -14,6 +16,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://localhost:3100",
+        "http://127.0.0.1:3100",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -27,3 +31,5 @@ def health_check() -> dict[str, str]:
 
 
 app.include_router(transactions_router)
+app.include_router(categories_router)
+app.include_router(accounts_router)

@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from uuid import UUID, uuid4
 
 import psycopg
-from psycopg.rows import dict_row
 
+from app.repositories.base import InvalidReferenceError, database_session
 from app.schemas import TransactionCreate, TransactionOut, TxType, TransactionUpdate
+
+if TYPE_CHECKING:
+    from app.repositories.accounts import AccountRepository
+    from app.repositories.categories import CategoryRepository
 
 
 @dataclass
@@ -49,6 +52,7 @@ class TransactionRepository(Protocol):
         *,
         tx_type: TxType | None = None,
         category_id: UUID | None = None,
+        account_id: UUID | None = None,
         date_from: date | None = None,
         date_to: date | None = None,
     ) -> list[TransactionRecord]: ...
@@ -72,6 +76,8 @@ class TransactionRepository(Protocol):
 @dataclass
 class InMemoryTransactionRepository:
     _items: dict[UUID, dict[UUID, TransactionRecord]] = field(default_factory=dict)
+    category_repository: CategoryRepository | None = None
+    account_repository: AccountRepository | None = None
 
     def list(
         self,
@@ -79,6 +85,7 @@ class InMemoryTransactionRepository:
         *,
         tx_type: TxType | None = None,
         category_id: UUID | None = None,
+        account_id: UUID | None = None,
         date_from: date | None = None,
         date_to: date | None = None,
     ) -> list[TransactionRecord]:
@@ -90,6 +97,8 @@ class InMemoryTransactionRepository:
                 continue
             if category_id is not None and record.category_id != category_id:
                 continue
+            if account_id is not None and record.account_id != account_id:
+                continue
             if date_from and record.date < date_from:
                 continue
             if date_to and record.date > date_to:
@@ -99,6 +108,7 @@ class InMemoryTransactionRepository:
         return sorted(filtered, key=lambda item: (item.date, item.created_at), reverse=True)
 
     def create(self, user_id: UUID, payload: TransactionCreate) -> TransactionRecord:
+        self._validate_references(user_id, payload.category_id, payload.account_id)
         now = datetime.now(tz=timezone.utc)
         record = TransactionRecord(
             id=uuid4(),
@@ -129,6 +139,13 @@ class InMemoryTransactionRepository:
             return None
 
         data = payload.model_dump(exclude_unset=True)
+        self._validate_references(
+            user_id,
+            data.get("category_id") if "category_id" in data else None,
+            data.get("account_id") if "account_id" in data else None,
+            validate_category="category_id" in data,
+            validate_account="account_id" in data,
+        )
         if "amount" in data:
             record.amount = data["amount"]
         if "type" in data:
@@ -154,20 +171,50 @@ class InMemoryTransactionRepository:
     def clear(self) -> None:
         self._items.clear()
 
+    def _validate_references(
+        self,
+        user_id: UUID,
+        category_id: UUID | None,
+        account_id: UUID | None,
+        *,
+        validate_category: bool = True,
+        validate_account: bool = True,
+    ) -> None:
+        if (
+            validate_category
+            and category_id is not None
+            and (
+                self.category_repository is None
+                or not self.category_repository.is_accessible(user_id, category_id)
+            )
+        ):
+            raise InvalidReferenceError("category_id")
+        if (
+            validate_account
+            and account_id is not None
+            and (
+                self.account_repository is None
+                or not self.account_repository.is_accessible(user_id, account_id)
+            )
+        ):
+            raise InvalidReferenceError("account_id")
+
+    def clear_category_reference(self, user_id: UUID, category_id: UUID) -> None:
+        for record in self._items.get(user_id, {}).values():
+            if record.category_id == category_id:
+                record.category_id = None
+                record.updated_at = datetime.now(tz=timezone.utc)
+
+    def clear_account_reference(self, user_id: UUID, account_id: UUID) -> None:
+        for record in self._items.get(user_id, {}).values():
+            if record.account_id == account_id:
+                record.account_id = None
+                record.updated_at = datetime.now(tz=timezone.utc)
+
 
 @dataclass
 class PostgresTransactionRepository:
     database_url: str
-
-    @contextmanager
-    def _session(self, user_id: UUID):
-        with psycopg.connect(self.database_url, row_factory=dict_row) as connection:
-            with connection.transaction():
-                connection.execute(
-                    "select set_config('app.user_id', %s, true)",
-                    (str(user_id),),
-                )
-                yield connection
 
     @staticmethod
     def _record_from_row(row: dict[str, object]) -> TransactionRecord:
@@ -206,6 +253,7 @@ class PostgresTransactionRepository:
         *,
         tx_type: TxType | None = None,
         category_id: UUID | None = None,
+        account_id: UUID | None = None,
         date_from: date | None = None,
         date_to: date | None = None,
     ) -> list[TransactionRecord]:
@@ -218,6 +266,9 @@ class PostgresTransactionRepository:
         if category_id is not None:
             conditions.append("category_id = %s")
             params.append(category_id)
+        if account_id is not None:
+            conditions.append("account_id = %s")
+            params.append(account_id)
         if date_from is not None:
             conditions.append("date >= %s")
             params.append(date_from)
@@ -233,7 +284,7 @@ class PostgresTransactionRepository:
             order by date desc, created_at desc
         """
 
-        with self._session(user_id) as connection:
+        with database_session(self.database_url, user_id) as connection:
             rows = connection.execute(query, params).fetchall()
         return [self._record_from_row(row) for row in rows]
 
@@ -264,8 +315,17 @@ class PostgresTransactionRepository:
             payload.category_id,
             payload.account_id,
         )
-        with self._session(user_id) as connection:
-            row = connection.execute(query, params).fetchone()
+        try:
+            with database_session(self.database_url, user_id) as connection:
+                self._validate_references(
+                    connection,
+                    user_id,
+                    payload.category_id,
+                    payload.account_id,
+                )
+                row = connection.execute(query, params).fetchone()
+        except psycopg.errors.CheckViolation as error:
+            raise self._reference_error(error) from error
         assert row is not None
         return self._record_from_row(row)
 
@@ -276,7 +336,7 @@ class PostgresTransactionRepository:
             from transactions
             where id = %s and user_id = current_setting('app.user_id')::uuid
         """
-        with self._session(user_id) as connection:
+        with database_session(self.database_url, user_id) as connection:
             row = connection.execute(query, (transaction_id,)).fetchone()
         if row is None:
             return None
@@ -324,8 +384,19 @@ class PostgresTransactionRepository:
             returning id, user_id, amount, type, description, date,
                       category_id, account_id, created_at, updated_at
         """
-        with self._session(user_id) as connection:
-            row = connection.execute(query, params).fetchone()
+        try:
+            with database_session(self.database_url, user_id) as connection:
+                self._validate_references(
+                    connection,
+                    user_id,
+                    data.get("category_id") if "category_id" in data else None,
+                    data.get("account_id") if "account_id" in data else None,
+                    validate_category="category_id" in data,
+                    validate_account="account_id" in data,
+                )
+                row = connection.execute(query, params).fetchone()
+        except psycopg.errors.CheckViolation as error:
+            raise self._reference_error(error) from error
         if row is None:
             return None
         return self._record_from_row(row)
@@ -335,7 +406,7 @@ class PostgresTransactionRepository:
             delete from transactions
             where id = %s and user_id = current_setting('app.user_id')::uuid
         """
-        with self._session(user_id) as connection:
+        with database_session(self.database_url, user_id) as connection:
             result = connection.execute(query, (transaction_id,))
         return result.rowcount > 0
 
@@ -343,6 +414,41 @@ class PostgresTransactionRepository:
         with psycopg.connect(self.database_url) as connection:
             with connection.transaction():
                 connection.execute("delete from transactions")
+
+    @staticmethod
+    def _validate_references(
+        connection,
+        user_id: UUID,
+        category_id: UUID | None,
+        account_id: UUID | None,
+        *,
+        validate_category: bool = True,
+        validate_account: bool = True,
+    ) -> None:
+        if validate_category and category_id is not None:
+            allowed = connection.execute(
+                """
+                select exists(
+                    select 1 from categories
+                    where id = %s and (user_id is null or user_id = %s)
+                )
+                """,
+                (category_id, user_id),
+            ).fetchone()["exists"]
+            if not allowed:
+                raise InvalidReferenceError("category_id")
+        if validate_account and account_id is not None:
+            allowed = connection.execute(
+                "select exists(select 1 from accounts where id = %s and user_id = %s)",
+                (account_id, user_id),
+            ).fetchone()["exists"]
+            if not allowed:
+                raise InvalidReferenceError("account_id")
+
+    @staticmethod
+    def _reference_error(error: psycopg.errors.CheckViolation) -> InvalidReferenceError:
+        field = "category_id" if "category_id" in str(error) else "account_id"
+        return InvalidReferenceError(field)
 
 
 def build_transaction_repository() -> TransactionRepository:

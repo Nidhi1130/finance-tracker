@@ -1,0 +1,14 @@
+.select {
+  width: 100%;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  padding: 12px 14px;
+}
+
+.select:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--brand-primary) 24%, transparent);
+  outline-offset: 1px;
+}

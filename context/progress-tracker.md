@@ -4,12 +4,12 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Phase 1 — Core finance workflows. Complete.
+- Phase 2 — Categories & Accounts. In progress.
 
 ## Current Goal
 
-- Phase 1 is complete. Next up is the categories/accounts expansion and
-  the deeper auth flow.
+- Deliver the locked Phase 2 data model, authenticated category/account CRUD,
+  transaction selectors and filters, isolation tests, and UI smoke coverage.
 
 ## Completed
 
@@ -38,16 +38,31 @@ Update this file after every meaningful implementation change.
   network with real create/read/delete behavior.
 - Root context remains the single source of truth for feature specs and
   progress tracking.
+- Phase 2 data model, stable global defaults, forced RLS policies, reference
+  ownership trigger, and additive migration are implemented.
+- Category API supports authenticated create/list/update/delete, immutable
+  global defaults, validation, duplicate detection, and per-user isolation.
+- Account API supports authenticated create/list/update/delete, normalized
+  names, duplicate detection, sorted lists, and per-user isolation.
+- Transaction writes validate category/account ownership, list filtering
+  supports both resources, and resource deletion preserves transactions.
+- PostgreSQL 16 CI coverage exercises RLS, cross-user isolation, reference
+  validation, and delete-to-null behavior with a non-bypass application role.
+- Categories and Accounts pages support authenticated create, list, edit, and
+  delete flows; global categories are read-only and custom category colors are
+  assigned automatically from the approved palette.
+- Local preview origins on ports 3000 and 3100 are covered by CORS regression
+  tests so resource names load correctly during review.
 
 ## In Progress
 
-- None.
+- Phase 2 transaction selectors and category/account list filters.
 
 ## Next Up
 
-- Start the next phase slice: categories, accounts, and auth flows.
-- Then tighten the root README and repo metadata to match the current
-  Finance Flow branding and project summary.
+- Wire Categories, Accounts, and Transactions UI flows.
+- Run frontend lint/build and complete the authenticated UI smoke test.
+- Then tighten the root README and repo metadata to match Finance Flow.
 
 ## Open Questions
 
@@ -57,9 +72,6 @@ Update this file after every meaningful implementation change.
   — decide before Phase 5. All free tiers may cold-start after idle.
 - **LLM provider (Phase 4):** Anthropic vs. OpenAI. Decide before Phase 4;
   keep rule-based categorization primary to keep cost near zero.
-- **Accounts entity timing:** the current agenda keeps accounts optional
-  in this slice. Create the table shape now, but defer full accounts UI
-  and CRUD until a later phase.
 
 ## Architecture Decisions
 

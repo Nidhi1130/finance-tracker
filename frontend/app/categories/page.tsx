@@ -1,19 +1,17 @@
 import { AppShellNav } from "@/components/layout/app-shell-nav";
-import { Card } from "@/components/ui/card";
-import styles from "../page.module.css";
+import { ResourceManager } from "@/components/resources/resource-manager";
 
 export default function CategoriesPage() {
   return (
     <AppShellNav>
-      <Card className={styles.card}>
-        <p className={styles.eyebrow}>Categories</p>
-        <h1 className={styles.title}>Organize spending by category.</h1>
-        <p className={styles.subtitle}>
-          This section will manage the user categories that power the finance
-          dashboard.
-        </p>
-      </Card>
+      <ResourceManager
+        endpoint="/categories"
+        eyebrow="Categories"
+        singular="category"
+        subtitle="Use the global defaults or add your own labels. Your custom categories stay private to your account."
+        title="Organize every money move."
+        withColor
+      />
     </AppShellNav>
   );
 }
-
