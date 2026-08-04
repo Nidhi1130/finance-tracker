@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -68,7 +68,7 @@ class InMemoryAccountRepository:
             id=uuid4(),
             user_id=user_id,
             name=payload.name,
-            created_at=datetime.now(tz=timezone.utc),
+            created_at=datetime.now(tz=UTC),
         )
         self._items.setdefault(user_id, {})[record.id] = record
         return record

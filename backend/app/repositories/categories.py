@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -14,7 +14,6 @@ from app.repositories.base import (
     database_session,
 )
 from app.schemas import CategoryCreate, CategoryOut, CategoryUpdate
-
 
 DEFAULT_CATEGORIES = (
     (UUID("00000000-0000-4000-8000-000000000001"), "Housing", "#7C3AED"),
@@ -76,7 +75,7 @@ class InMemoryCategoryRepository:
     _on_delete: Callable[[UUID, UUID], None] | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
-        created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        created_at = datetime(2026, 1, 1, tzinfo=UTC)
         self._globals = {
             category_id: CategoryRecord(
                 id=category_id,
@@ -106,7 +105,7 @@ class InMemoryCategoryRepository:
             user_id=user_id,
             name=payload.name,
             color=payload.color,
-            created_at=datetime.now(tz=timezone.utc),
+            created_at=datetime.now(tz=UTC),
         )
         self._items.setdefault(user_id, {})[record.id] = record
         return record

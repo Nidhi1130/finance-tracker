@@ -5,7 +5,6 @@ from app.routers.accounts import router as accounts_router
 from app.routers.categories import router as categories_router
 from app.routers.transactions import router as transactions_router
 
-
 app = FastAPI(
     title="Finance Flow API",
     version="0.1.0",
