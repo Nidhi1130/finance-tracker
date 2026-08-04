@@ -17,7 +17,6 @@ from app.schemas import (
     CategorizationRuleUpdate,
 )
 
-
 router = APIRouter(prefix="/categorization-rules", tags=["categorization-rules"])
 
 

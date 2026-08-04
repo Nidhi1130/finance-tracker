@@ -11,7 +11,6 @@ from pydantic import BaseModel
 from app.schemas import TxType
 from app.services.categorization import CategoryCandidate
 
-
 DEFAULT_MODEL = "gpt-5.6-luna"
 DEFAULT_TIMEOUT_SECONDS = 8.0
 

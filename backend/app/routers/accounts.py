@@ -8,7 +8,6 @@ from app.dependencies import get_current_user_id
 from app.repositories import DuplicateResourceError, account_repository
 from app.schemas import AccountCreate, AccountListResponse, AccountOut, AccountUpdate
 
-
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
 

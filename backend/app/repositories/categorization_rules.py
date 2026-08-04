@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
 from uuid import UUID, uuid4
 
 import psycopg
 
-from app.repositories.base import DuplicateResourceError, InvalidReferenceError, database_session
+from app.repositories.base import (
+    DuplicateResourceError,
+    InvalidReferenceError,
+    database_session,
+)
 from app.schemas import (
     CategorizationRuleCreate,
     CategorizationRuleOut,
@@ -100,7 +104,7 @@ class InMemoryCategorizationRuleRepository:
         category = self._require_category(user_id, payload.category_id)
         if self._is_duplicate(user_id, payload.keyword):
             raise DuplicateResourceError
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         record = CategorizationRuleRecord(
             id=uuid4(),
             user_id=user_id,
@@ -144,7 +148,7 @@ class InMemoryCategorizationRuleRepository:
             record.enabled = data["enabled"]
         record.category_name = category.name
         record.category_color = category.color
-        record.updated_at = datetime.now(tz=timezone.utc)
+        record.updated_at = datetime.now(tz=UTC)
         return record
 
     def delete(self, user_id: UUID, rule_id: UUID) -> bool:

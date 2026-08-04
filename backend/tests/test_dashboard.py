@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID
 
 from fastapi.testclient import TestClient
 
-from app.schemas import DashboardBucket, TxType
 from app.repositories.categories import CategoryRecord, InMemoryCategoryRepository
 from app.repositories.dashboard import InMemoryDashboardRepository
-from app.repositories.transactions import InMemoryTransactionRepository, TransactionRecord
+from app.repositories.transactions import (
+    InMemoryTransactionRepository,
+    TransactionRecord,
+)
+from app.schemas import DashboardBucket, TxType
 from app.services.dashboard import select_bucket
-
 
 AuthHeaders = Callable[[str], dict[str, str]]
 
@@ -159,14 +161,14 @@ def test_dashboard_in_memory_category_order_breaks_equal_name_and_amount_ties_by
             user_id=None,
             name="Food",
             color="#111111",
-            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
         ),
         second_category_id: CategoryRecord(
             id=second_category_id,
             user_id=None,
             name="food",
             color="#222222",
-            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
         ),
     }
     transactions = InMemoryTransactionRepository()
@@ -181,8 +183,8 @@ def test_dashboard_in_memory_category_order_breaks_equal_name_and_amount_ties_by
                 date=date(2026, 1, 1),
                 category_id=second_category_id,
                 account_id=None,
-                created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-                updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                updated_at=datetime(2026, 1, 1, tzinfo=UTC),
             ),
             UUID("30000000-0000-4000-8000-000000000002"): TransactionRecord(
                 id=UUID("30000000-0000-4000-8000-000000000002"),
@@ -193,8 +195,8 @@ def test_dashboard_in_memory_category_order_breaks_equal_name_and_amount_ties_by
                 date=date(2026, 1, 1),
                 category_id=first_category_id,
                 account_id=None,
-                created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-                updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                updated_at=datetime(2026, 1, 1, tzinfo=UTC),
             ),
         }
     }

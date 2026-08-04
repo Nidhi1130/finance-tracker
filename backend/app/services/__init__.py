@@ -10,7 +10,6 @@ from app.repositories import (
 )
 from app.services.categorization import CategorizationService
 
-
 provider_mode = getenv("CATEGORIZATION_PROVIDER", "rules").strip().lower()
 if provider_mode == "rules":
     categorization_provider = None

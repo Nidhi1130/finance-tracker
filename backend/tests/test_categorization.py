@@ -1,17 +1,21 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date
-from datetime import datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from threading import Barrier, Event, Thread
-from typing import Callable
 from uuid import UUID
 
 from app.repositories.categories import InMemoryCategoryRepository
-from app.repositories.categorization_rules import InMemoryCategorizationRuleRepository
-from app.repositories.categorization_rules import CategorizationRuleRecord
-from app.repositories.transactions import InMemoryTransactionRepository, TransactionRecord
+from app.repositories.categorization_rules import (
+    CategorizationRuleRecord,
+    InMemoryCategorizationRuleRepository,
+)
+from app.repositories.transactions import (
+    InMemoryTransactionRepository,
+    TransactionRecord,
+)
 from app.schemas import (
     CategorizationRuleCreate,
     CategorizationSource,
@@ -23,7 +27,6 @@ from app.schemas import (
 )
 from app.services import categorization as categorization_module
 from app.services.categorization import CategoryCandidate, match_rule
-
 
 RULE_A = UUID("10000000-0000-4000-8000-000000000001")
 RULE_B = UUID("10000000-0000-4000-8000-000000000002")
@@ -115,7 +118,7 @@ def pending_transaction(
 
 
 def rule(keyword: str, rule_id: UUID, *, enabled: bool = True) -> CategorizationRuleRecord:
-    timestamp = datetime(2026, 8, 2, tzinfo=timezone.utc)
+    timestamp = datetime(2026, 8, 2, tzinfo=UTC)
     return CategorizationRuleRecord(
         id=rule_id,
         user_id=USER_ID,
@@ -342,7 +345,7 @@ def test_in_memory_automatic_apply_is_atomic_with_manual_update() -> None:
                 automatic_category.id,
                 CategorizationSource.openai,
             )
-        except BaseException as error:
+        except BaseException as error:  # noqa: BLE001 - captures thread failures for assertions
             errors.append(error)
 
     automatic_thread = Thread(target=apply_automatic)
@@ -360,7 +363,7 @@ def test_in_memory_automatic_apply_is_atomic_with_manual_update() -> None:
                 transaction.id,
                 TransactionUpdate(category_id=manual_category.id),
             )
-        except BaseException as error:
+        except BaseException as error:  # noqa: BLE001 - captures thread failures for assertions
             errors.append(error)
         finally:
             manual_done.set()
@@ -406,7 +409,7 @@ def test_in_memory_finish_is_atomic_with_manual_update() -> None:
                 transaction.id,
                 CategorizationStatus.failed,
             )
-        except BaseException as error:
+        except BaseException as error:  # noqa: BLE001 - captures thread failures for assertions
             errors.append(error)
 
     finish_thread = Thread(target=finish_automatic)
@@ -424,7 +427,7 @@ def test_in_memory_finish_is_atomic_with_manual_update() -> None:
                 transaction.id,
                 TransactionUpdate(category_id=manual_category.id),
             )
-        except BaseException as error:
+        except BaseException as error:  # noqa: BLE001 - captures thread failures for assertions
             errors.append(error)
         finally:
             manual_done.set()

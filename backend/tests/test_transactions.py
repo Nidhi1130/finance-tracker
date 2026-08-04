@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 from app.routers import transactions as transactions_router
 from app.schemas import CategorizationSource, CategorizationStatus
 
-
 AuthHeaders = Callable[[str], dict[str, str]]
 DEFAULT_USER_ID = UUID("10000000-0000-4000-8000-000000000001")
 

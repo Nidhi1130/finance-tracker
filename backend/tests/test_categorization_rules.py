@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.repositories import categorization_rule_repository
 
-
 AuthHeaders = Callable[[str], dict[str, str]]
 GLOBAL_CATEGORY_ID = "00000000-0000-4000-8000-000000000001"
 

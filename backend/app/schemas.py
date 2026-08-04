@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import date as Date, datetime
+import re
+from datetime import date as Date
+from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-import re
 from typing import Annotated
 from uuid import UUID
 

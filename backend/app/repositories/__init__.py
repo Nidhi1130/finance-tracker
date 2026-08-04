@@ -99,8 +99,8 @@ dashboard_repository = build_dashboard_repository()
 __all__ = [
     "DuplicateResourceError",
     "ForbiddenResourceError",
-    "InvalidReferenceError",
     "InMemoryTransactionRepository",
+    "InvalidReferenceError",
     "PostgresTransactionRepository",
     "TransactionRecord",
     "TransactionRepository",
@@ -110,8 +110,8 @@ __all__ = [
     "build_category_repository",
     "build_dashboard_repository",
     "build_transaction_repository",
-    "category_repository",
     "categorization_rule_repository",
+    "category_repository",
     "dashboard_repository",
     "transaction_repository",
 ]

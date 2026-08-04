@@ -6,11 +6,11 @@ from typing import Protocol
 from uuid import UUID
 
 from app.repositories.base import InvalidReferenceError
+from app.repositories.categories import CategoryRepository
 from app.repositories.categorization_rules import (
     CategorizationRuleRecord,
     CategorizationRuleRepository,
 )
-from app.repositories.categories import CategoryRepository
 from app.repositories.transactions import TransactionRepository
 from app.schemas import CategorizationSource, CategorizationStatus, TxType
 
@@ -86,7 +86,7 @@ class CategorizationService:
                 tx_type=transaction.type,
                 categories=categories,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - background task must never crash on provider errors
             self.transaction_repository.finish_without_category(
                 user_id,
                 transaction_id,

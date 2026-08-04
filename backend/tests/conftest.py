@@ -8,7 +8,6 @@ from collections.abc import Callable, Iterator
 import pytest
 from fastapi.testclient import TestClient
 
-
 os.environ.pop("DATABASE_URL", None)
 os.environ.pop("OPENAI_API_KEY", None)
 os.environ.pop("SUPABASE_URL", None)
@@ -21,7 +20,6 @@ from app.repositories import (
     category_repository,
     transaction_repository,
 )
-
 
 USER_A_ID = "10000000-0000-4000-8000-000000000001"
 USER_B_ID = "20000000-0000-4000-8000-000000000002"

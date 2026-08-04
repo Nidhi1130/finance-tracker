@@ -13,7 +13,6 @@ from app.providers.openai_categorization import (
 from app.schemas import TxType
 from app.services.categorization import CategoryCandidate
 
-
 DINING_ID = UUID("10000000-0000-4000-8000-000000000001")
 GROCERIES_ID = UUID("10000000-0000-4000-8000-000000000002")
 FOREIGN_ID = UUID("20000000-0000-4000-8000-000000000001")

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from uuid import UUID
 from typing import Literal
+from uuid import UUID
 
 import psycopg
 from psycopg import Connection
@@ -31,12 +31,11 @@ def database_session(
     *,
     repeatable_read: bool = False,
 ) -> Iterator[Connection]:
-    with psycopg.connect(database_url, row_factory=dict_row) as connection:
-        with connection.transaction():
-            if repeatable_read:
-                connection.execute("set transaction isolation level repeatable read")
-            connection.execute(
-                "select set_config('app.user_id', %s, true)",
-                (str(user_id),),
-            )
-            yield connection
+    with psycopg.connect(database_url, row_factory=dict_row) as connection, connection.transaction():
+        if repeatable_read:
+            connection.execute("set transaction isolation level repeatable read")
+        connection.execute(
+            "select set_config('app.user_id', %s, true)",
+            (str(user_id),),
+        )
+        yield connection

@@ -6,6 +6,7 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from threading import Barrier, Lock, Thread
+from typing import Self
 from uuid import UUID
 
 import psycopg
@@ -15,9 +16,13 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 
 from app.repositories.accounts import PostgresAccountRepository
-from app.repositories.base import DuplicateResourceError, InvalidReferenceError, database_session
-from app.repositories.categorization_rules import PostgresCategorizationRuleRepository
+from app.repositories.base import (
+    DuplicateResourceError,
+    InvalidReferenceError,
+    database_session,
+)
 from app.repositories.categories import PostgresCategoryRepository
+from app.repositories.categorization_rules import PostgresCategorizationRuleRepository
 from app.repositories.dashboard import PostgresDashboardRepository
 from app.repositories.transactions import PostgresTransactionRepository
 from app.schemas import (
@@ -32,7 +37,6 @@ from app.schemas import (
     TransactionUpdate,
     TxType,
 )
-
 
 ROOT = Path(__file__).parents[2]
 INIT_SQL = (ROOT / "backend/sql/init.sql").read_text()
@@ -160,12 +164,14 @@ def test_postgres_rls_and_transaction_references(postgres_url: str) -> None:
         )
     assert account_error.value.field == "account_id"
 
-    with pytest.raises(psycopg.errors.InsufficientPrivilege):
-        with database_session(postgres_url, USER_A_ID) as connection:
-            connection.execute(
-                "insert into accounts (user_id, name) values (%s, 'Impersonated')",
-                (USER_B_ID,),
-            )
+    with (
+        pytest.raises(psycopg.errors.InsufficientPrivilege),
+        database_session(postgres_url, USER_A_ID) as connection,
+    ):
+        connection.execute(
+            "insert into accounts (user_id, name) values (%s, 'Impersonated')",
+            (USER_B_ID,),
+        )
 
     assert categories.delete(USER_A_ID, user_a_category.id)
     assert accounts.delete(USER_A_ID, user_a_account.id)
@@ -243,15 +249,17 @@ def test_phase4_rules_enforce_category_ownership_and_own_row_rls(postgres_url: s
             "select id from categories where user_id is null limit 1"
         ).fetchone()["id"]
 
-    with pytest.raises(psycopg.errors.CheckViolation):
-        with database_session(postgres_url, USER_A_ID) as connection:
-            connection.execute(
-                """
-                insert into categorization_rules (user_id, keyword, category_id)
-                values (%s, 'other', %s)
-                """,
-                (USER_A_ID, user_b_category.id),
-            )
+    with (
+        pytest.raises(psycopg.errors.CheckViolation),
+        database_session(postgres_url, USER_A_ID) as connection,
+    ):
+        connection.execute(
+            """
+            insert into categorization_rules (user_id, keyword, category_id)
+            values (%s, 'other', %s)
+            """,
+            (USER_A_ID, user_b_category.id),
+        )
 
     with database_session(postgres_url, USER_A_ID) as connection:
         rule = connection.execute(
@@ -476,7 +484,7 @@ def test_postgres_concurrent_retry_has_one_atomic_winner(postgres_url: str) -> N
             result = transactions.prepare_categorization(USER_A_ID, transaction.id)
             with lock:
                 results.append(result)
-        except BaseException as error:
+        except BaseException as error:  # noqa: BLE001 - captures thread failures for assertions
             with lock:
                 errors.append(error)
 
@@ -836,7 +844,7 @@ def test_database_session_sets_repeatable_read_before_the_rls_user_context(
         def __init__(self) -> None:
             self.queries: list[tuple[str, tuple[str, ...]]] = []
 
-        def __enter__(self) -> Connection:
+        def __enter__(self) -> Self:
             return self
 
         def __exit__(self, _exc_type: object, _exc: object, _traceback: object) -> None:

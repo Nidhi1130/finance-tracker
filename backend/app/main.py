@@ -7,7 +7,6 @@ from app.routers.categorization_rules import router as categorization_rules_rout
 from app.routers.dashboard import router as dashboard_router
 from app.routers.transactions import router as transactions_router
 
-
 app = FastAPI(
     title="Finance Flow API",
     version="0.1.0",

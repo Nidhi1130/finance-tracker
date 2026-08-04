@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Protocol
 from uuid import UUID
 
-from app.repositories.categories import CategoryRepository
 from app.repositories.base import database_session
+from app.repositories.categories import CategoryRepository
 from app.repositories.transactions import TransactionRepository
 from app.schemas import DashboardBucket, TxType
 
@@ -116,7 +116,7 @@ class InMemoryDashboardRepository:
         total_expense: Decimal,
     ) -> DashboardCategoryRecord:
         category = self.category_repository.get(user_id, category_id) if category_id else None
-        percentage = (amount / total_expense * Decimal("100")).quantize(
+        percentage = (amount / total_expense * Decimal(100)).quantize(
             Decimal("0.01"),
             rounding=ROUND_HALF_UP,
         )

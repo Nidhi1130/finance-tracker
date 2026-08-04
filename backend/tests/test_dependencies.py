@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -30,7 +30,7 @@ def test_extract_subject_from_supabase_jwks_token(monkeypatch) -> None:
         {
             "sub": str(subject),
             "iss": issuer,
-            "exp": datetime.now(tz=timezone.utc) + timedelta(minutes=5),
+            "exp": datetime.now(tz=UTC) + timedelta(minutes=5),
         },
         private_key,
         algorithm="ES256",

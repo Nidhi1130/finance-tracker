@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from threading import RLock
 from typing import TYPE_CHECKING, Protocol
@@ -15,8 +15,8 @@ from app.schemas import (
     CategorizationStatus,
     TransactionCreate,
     TransactionOut,
-    TxType,
     TransactionUpdate,
+    TxType,
 )
 
 if TYPE_CHECKING:
@@ -145,7 +145,7 @@ class InMemoryTransactionRepository:
 
     def create(self, user_id: UUID, payload: TransactionCreate) -> TransactionRecord:
         self._validate_references(user_id, payload.category_id, payload.account_id)
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         record = TransactionRecord(
             id=uuid4(),
             user_id=user_id,
@@ -210,10 +210,10 @@ class InMemoryTransactionRepository:
                 else:
                     record.category_source = CategorizationSource.manual
                     record.categorization_status = CategorizationStatus.categorized
-                    record.categorized_at = datetime.now(tz=timezone.utc)
+                    record.categorized_at = datetime.now(tz=UTC)
             if "account_id" in data:
                 record.account_id = data["account_id"]
-            record.updated_at = datetime.now(tz=timezone.utc)
+            record.updated_at = datetime.now(tz=UTC)
             return record
 
     def prepare_categorization(
@@ -232,7 +232,7 @@ class InMemoryTransactionRepository:
                 )
             ):
                 return None
-            now = datetime.now(tz=timezone.utc)
+            now = datetime.now(tz=UTC)
             record.category_id = None
             record.category_source = None
             record.categorization_status = CategorizationStatus.pending
@@ -261,7 +261,7 @@ class InMemoryTransactionRepository:
                 None,
                 validate_account=False,
             )
-            now = datetime.now(tz=timezone.utc)
+            now = datetime.now(tz=UTC)
             record.category_id = category_id
             record.category_source = source
             record.categorization_status = CategorizationStatus.categorized
@@ -286,7 +286,7 @@ class InMemoryTransactionRepository:
             record.category_source = None
             record.categorization_status = status
             record.categorized_at = None
-            record.updated_at = datetime.now(tz=timezone.utc)
+            record.updated_at = datetime.now(tz=UTC)
             return record
 
     def delete(self, user_id: UUID, transaction_id: UUID) -> bool:
@@ -331,13 +331,13 @@ class InMemoryTransactionRepository:
         for record in self._items.get(user_id, {}).values():
             if record.category_id == category_id:
                 record.category_id = None
-                record.updated_at = datetime.now(tz=timezone.utc)
+                record.updated_at = datetime.now(tz=UTC)
 
     def clear_account_reference(self, user_id: UUID, account_id: UUID) -> None:
         for record in self._items.get(user_id, {}).values():
             if record.account_id == account_id:
                 record.account_id = None
-                record.updated_at = datetime.now(tz=timezone.utc)
+                record.updated_at = datetime.now(tz=UTC)
 
 
 @dataclass
@@ -473,7 +473,7 @@ class PostgresTransactionRepository:
             payload.account_id,
             category_source,
             categorization_status,
-            datetime.now(tz=timezone.utc) if payload.category_id is not None else None,
+            datetime.now(tz=UTC) if payload.category_id is not None else None,
         )
         try:
             with database_session(self.database_url, user_id) as connection:
@@ -682,9 +682,8 @@ class PostgresTransactionRepository:
         return result.rowcount > 0
 
     def clear(self) -> None:
-        with psycopg.connect(self.database_url) as connection:
-            with connection.transaction():
-                connection.execute("delete from transactions")
+        with psycopg.connect(self.database_url) as connection, connection.transaction():
+            connection.execute("delete from transactions")
 
     @staticmethod
     def _validate_references(

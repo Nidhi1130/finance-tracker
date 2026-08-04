@@ -1,12 +1,11 @@
-from pathlib import Path
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 from uuid import UUID
 
 import pytest
 
 from app import schemas
-
 
 ROOT = Path(__file__).parents[2]
 INIT_SQL = (ROOT / "backend/sql/init.sql").read_text()
@@ -80,9 +79,9 @@ def test_phase4_schema_serializes_categorization_enums_and_normalizes_keywords()
         account_id=None,
         category_source=schemas.CategorizationSource.rule,
         categorization_status=schemas.CategorizationStatus.categorized,
-        categorized_at=datetime(2026, 8, 2, 12, tzinfo=timezone.utc),
-        created_at=datetime(2026, 8, 2, 12, tzinfo=timezone.utc),
-        updated_at=datetime(2026, 8, 2, 12, tzinfo=timezone.utc),
+        categorized_at=datetime(2026, 8, 2, 12, tzinfo=UTC),
+        created_at=datetime(2026, 8, 2, 12, tzinfo=UTC),
+        updated_at=datetime(2026, 8, 2, 12, tzinfo=UTC),
     )
 
     assert rule.keyword == "coffee shop"
