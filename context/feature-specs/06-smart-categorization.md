@@ -50,7 +50,7 @@ comes only from its `sub` claim.
 - `GET /categorization-rules` lists the current user's rules with category
   name and color.
 - `POST /categorization-rules` creates a rule.
-- `PATCH /categorization-rules/{rule_id}` changes keyword, category, or enabled
+- `PUT /categorization-rules/{rule_id}` changes keyword, category, or enabled
   state.
 - `DELETE /categorization-rules/{rule_id}` deletes the rule.
 
