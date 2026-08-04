@@ -1,38 +1,31 @@
-create extension if not exists pgcrypto;
+begin;
 
-create schema if not exists auth;
+update categories set name = btrim(name);
+update accounts set name = btrim(name);
+update categories set color = '#6B7280' where color is null;
+update categories set created_at = now() where created_at is null;
+update accounts set created_at = now() where created_at is null;
 
-create table if not exists auth.users (
-  id uuid primary key
-);
+alter table categories alter column color set not null;
+alter table categories alter column created_at set not null;
+alter table accounts alter column created_at set not null;
 
-create table if not exists categories (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users(id),
-  name text not null check (char_length(btrim(name)) between 1 and 80),
-  color text not null check (color ~ '^#[0-9A-F]{6}$'),
-  created_at timestamptz not null default now()
-);
+alter table categories drop constraint if exists categories_name_length_check;
+alter table categories add constraint categories_name_length_check
+  check (char_length(btrim(name)) between 1 and 80);
+alter table categories drop constraint if exists categories_color_format_check;
+alter table categories add constraint categories_color_format_check
+  check (color ~ '^#[0-9A-F]{6}$');
+alter table accounts drop constraint if exists accounts_name_length_check;
+alter table accounts add constraint accounts_name_length_check
+  check (char_length(btrim(name)) between 1 and 80);
 
-create table if not exists accounts (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users(id) not null,
-  name text not null check (char_length(btrim(name)) between 1 and 80),
-  created_at timestamptz not null default now()
-);
-
-create table if not exists transactions (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users(id) not null,
-  amount numeric(12,2) not null check (amount >= 0),
-  type text not null check (type in ('income', 'expense')),
-  description text,
-  date date not null,
-  category_id uuid references categories(id) on delete set null,
-  account_id uuid references accounts(id) on delete set null,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
+alter table transactions drop constraint if exists transactions_category_id_fkey;
+alter table transactions add constraint transactions_category_id_fkey
+  foreign key (category_id) references categories(id) on delete set null;
+alter table transactions drop constraint if exists transactions_account_id_fkey;
+alter table transactions add constraint transactions_account_id_fkey
+  foreign key (account_id) references accounts(id) on delete set null;
 
 create unique index if not exists categories_owner_lower_name_key
   on categories (
@@ -43,40 +36,6 @@ create unique index if not exists accounts_owner_lower_name_key
   on accounts (user_id, lower(name));
 create index if not exists transactions_category_id_idx on transactions(category_id);
 create index if not exists transactions_account_id_idx on transactions(account_id);
-
-alter table categories enable row level security;
-alter table accounts enable row level security;
-alter table transactions enable row level security;
-
-drop policy if exists categories_read_own_or_global on categories;
-create policy categories_read_own_or_global
-  on categories
-  for select
-  using (
-    user_id is null
-    or user_id = nullif(current_setting('app.user_id', true), '')::uuid
-  );
-
-drop policy if exists categories_write_own on categories;
-create policy categories_write_own
-  on categories
-  for all
-  using (user_id = nullif(current_setting('app.user_id', true), '')::uuid)
-  with check (user_id = nullif(current_setting('app.user_id', true), '')::uuid);
-
-drop policy if exists accounts_own_rows on accounts;
-create policy accounts_own_rows
-  on accounts
-  for all
-  using (user_id = nullif(current_setting('app.user_id', true), '')::uuid)
-  with check (user_id = nullif(current_setting('app.user_id', true), '')::uuid);
-
-drop policy if exists transactions_own_rows on transactions;
-create policy transactions_own_rows
-  on transactions
-  for all
-  using (user_id = nullif(current_setting('app.user_id', true), '')::uuid)
-  with check (user_id = nullif(current_setting('app.user_id', true), '')::uuid);
 
 insert into categories (id, user_id, name, color)
 values
@@ -134,3 +93,5 @@ for each row execute function enforce_transaction_reference_ownership();
 alter table categories force row level security;
 alter table accounts force row level security;
 alter table transactions force row level security;
+
+commit;

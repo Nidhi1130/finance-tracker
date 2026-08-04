@@ -1,12 +1,28 @@
 from __future__ import annotations
 
-from datetime import date as Date, datetime
+import re
+from datetime import date as Date
+from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def normalize_name(value: str) -> str:
+    normalized = value.strip()
+    if not 1 <= len(normalized) <= 80:
+        raise ValueError("name must contain between 1 and 80 characters")
+    return normalized
+
+
+def normalize_color(value: str) -> str:
+    normalized = value.upper()
+    if not re.fullmatch(r"#[0-9A-F]{6}", normalized):
+        raise ValueError("color must use #RRGGBB format")
+    return normalized
 
 
 class TxType(str, Enum):
@@ -49,3 +65,53 @@ class TransactionOut(BaseModel):
 
 class TransactionListResponse(BaseModel):
     items: list[TransactionOut]
+
+
+class CategoryCreate(BaseModel):
+    name: str
+    color: str
+
+    _normalize_name = field_validator("name")(normalize_name)
+    _normalize_color = field_validator("color")(normalize_color)
+
+
+class CategoryUpdate(BaseModel):
+    name: str
+    color: str
+
+    _normalize_name = field_validator("name")(normalize_name)
+    _normalize_color = field_validator("color")(normalize_color)
+
+
+class CategoryOut(BaseModel):
+    id: UUID
+    name: str
+    color: str
+    is_global: bool
+    created_at: datetime
+
+
+class CategoryListResponse(BaseModel):
+    items: list[CategoryOut]
+
+
+class AccountCreate(BaseModel):
+    name: str
+
+    _normalize_name = field_validator("name")(normalize_name)
+
+
+class AccountUpdate(BaseModel):
+    name: str
+
+    _normalize_name = field_validator("name")(normalize_name)
+
+
+class AccountOut(BaseModel):
+    id: UUID
+    name: str
+    created_at: datetime
+
+
+class AccountListResponse(BaseModel):
+    items: list[AccountOut]

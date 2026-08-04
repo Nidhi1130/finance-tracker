@@ -41,6 +41,21 @@
 - **Money**: stored as `numeric(12,2)`, never float. Amounts are stored
   positive; `type` (`income` / `expense`) gives direction.
 
+### Phase 2 resource rules
+
+- Global categories have `user_id is null`; authenticated users may read but
+  never mutate them. Custom categories and all accounts belong to one user.
+- Category colors are uppercase `#RRGGBB`; category/account names are trimmed,
+  1–80 characters, and case-insensitively unique per ownership scope.
+- Deleting a category/account uses `ON DELETE SET NULL`, preserving referenced
+  transactions.
+- A transaction category must be global or owned by the transaction user; an
+  account must be owned by the transaction user. FastAPI validates this and a
+  Postgres trigger enforces it as defense in depth.
+- RLS is forced on application tables so the table owner cannot bypass the
+  ownership policies. Backend transactions set local `app.user_id` from the
+  verified JWT subject.
+
 ## Auth and Access Model
 
 - Every user signs in via Supabase Auth (email/password or magic link).
