@@ -72,7 +72,7 @@ class CategorizationService:
             self.transaction_repository.finish_without_category(
                 user_id,
                 transaction_id,
-                CategorizationStatus.failed,
+                CategorizationStatus.not_requested,
             )
             return
 

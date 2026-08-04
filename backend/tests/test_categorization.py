@@ -276,16 +276,18 @@ def test_no_description_or_provider_result_finishes_not_requested() -> None:
     assert len(provider.calls) == 1
 
 
-def test_missing_provider_marks_failed_without_changing_category() -> None:
+def test_missing_provider_finishes_not_requested_without_changing_category() -> None:
     service, transactions, _, _, _ = categorization_context(None)
     transaction = pending_transaction(transactions, "Unknown merchant")
 
     service.categorize(USER_ID, transaction.id)
 
-    failed = transactions.get(USER_ID, transaction.id)
-    assert failed is not None
-    assert failed.category_id is None
-    assert failed.categorization_status is CategorizationStatus.failed
+    uncategorized = transactions.get(USER_ID, transaction.id)
+    assert uncategorized is not None
+    assert uncategorized.category_id is None
+    assert uncategorized.category_source is None
+    assert uncategorized.categorization_status is CategorizationStatus.not_requested
+    assert uncategorized.categorized_at is None
 
 
 def test_in_memory_automatic_apply_is_atomic_with_manual_update() -> None:

@@ -11,10 +11,17 @@ from app.repositories import (
 from app.services.categorization import CategorizationService
 
 
-openai_api_key = getenv("OPENAI_API_KEY")
-categorization_provider = (
-    OpenAICategorizationProvider(api_key=openai_api_key) if openai_api_key else None
-)
+provider_mode = getenv("CATEGORIZATION_PROVIDER", "rules").strip().lower()
+if provider_mode == "rules":
+    categorization_provider = None
+elif provider_mode == "openai":
+    categorization_provider = OpenAICategorizationProvider(
+        api_key=getenv("OPENAI_API_KEY"),
+    )
+else:
+    raise ValueError(
+        "CATEGORIZATION_PROVIDER must be either 'rules' or 'openai'",
+    )
 categorization_service = CategorizationService(
     transaction_repository=transaction_repository,
     rule_repository=categorization_rule_repository,
