@@ -83,7 +83,9 @@ Missing configuration, timeouts, refusals, invalid structured output, provider
 errors, or no suitable category leave the transaction intact. Provider errors
 set `categorization_status = 'failed'`; a valid response with no meaningful
 category sets `not_requested`. Both remain visibly uncategorized. The retry
-endpoint moves an eligible transaction to `pending` and schedules a new task.
+endpoint atomically moves an eligible non-pending transaction to `pending` and
+schedules a new task. An already-pending or manually categorized transaction
+returns `409`, so concurrent duplicate requests enqueue at most one task.
 
 ## Data Model
 
@@ -159,6 +161,10 @@ The schema returns either one supplied category ID or null. The backend still
 validates the returned ID against the allowed set. The prompt instructs the
 model to return null when no category is meaningfully supported.
 
+The Responses request sets `store=false`, which disables application-state
+storage for that response. Ordinary OpenAI abuse-monitoring retention is
+separate; this setting alone is not Zero Data Retention.
+
 Configuration:
 
 - `OPENAI_API_KEY` is required only for the fallback and remains server-side;
@@ -190,9 +196,10 @@ Transaction output adds `category_source`, `categorization_status`, and
 `categorized_at`.
 
 `POST /transactions/{transaction_id}/categorize` retries only a user-owned,
-uncategorized transaction. It returns `202` with the transaction in `pending`
-state. A manually categorized transaction returns `409` rather than silently
-replacing the user’s choice.
+eligible non-pending transaction. It returns `202` with the transaction in
+`pending` state. An already-pending or manually categorized transaction
+returns `409` rather than enqueuing duplicate work or replacing the user’s
+choice.
 
 Transaction create and update preserve the existing category/account
 validation. Setting a category manually always sets the manual source and
@@ -203,8 +210,10 @@ categorized status. Clearing a category explicitly results in
 
 ### Transaction form and list
 
-The category selector’s empty/default choice is labelled “Auto categorize.” A
-named category is a manual choice.
+The create form category selector’s empty/default choice is labelled “Auto
+categorize.” The edit form uses “Uncategorized,” because saving that choice
+sets `not_requested` without scheduling background work. A named category is a
+manual choice.
 
 The list renders:
 
@@ -212,7 +221,8 @@ The list renders:
 - an Auto badge for `rule` and `openai` sources, with accessible text naming
   the source;
 - the normal category without a badge for manual choices;
-- `Uncategorized` and Retry for failed work.
+- `Uncategorized` and Retry for failed work;
+- `Uncategorized` and Categorize for eligible `not_requested` work.
 
 Polling is bounded to rows that are pending. The transactions query is
 invalidated after background completion or retry, and all keys remain scoped
@@ -270,8 +280,8 @@ authenticated user ID, and mutations invalidate only that user’s rule cache.
 
 ### Frontend tests
 
-- Auto categorize option and manual selection;
-- pending, rule, OpenAI, manual, failed, and retry states;
+- create-form Auto categorize, edit-form Uncategorized, and manual selection;
+- pending, rule, OpenAI, manual, not-requested Categorize, failed, and Retry states;
 - correction offer and independent rule creation;
 - Rules page CRUD and enable/disable behavior;
 - authenticated query-key isolation;

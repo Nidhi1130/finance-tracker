@@ -161,6 +161,34 @@ describe("TransactionsClient Phase 4 categorization", () => {
     expect(await screen.findByRole("option", { name: "Auto categorize" })).toBeInTheDocument();
   });
 
+  it("labels the empty edit choice as Uncategorized without scheduling categorization", async () => {
+    const manual = transaction({ category_source: "manual" });
+    listTransactionsMock.mockResolvedValue([manual]);
+    saveTransactionMock.mockResolvedValue(
+      transaction({
+        category_id: null,
+        category_source: null,
+        categorization_status: "not_requested",
+        categorized_at: null,
+      }),
+    );
+    renderTransactionsClient();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    expect(screen.getByRole("option", { name: "Uncategorized" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Auto categorize" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Update transaction" }));
+
+    await waitFor(() => {
+      expect(saveTransactionMock).toHaveBeenCalledWith(
+        "transaction-1",
+        expect.objectContaining({ category_id: null }),
+      );
+    });
+    expect(retryCategorizationMock).not.toHaveBeenCalled();
+  });
+
   it("shows a stable pending row and polls every 1.5 seconds only while pending", async () => {
     vi.useFakeTimers();
     listTransactionsMock
@@ -265,6 +293,30 @@ describe("TransactionsClient Phase 4 categorization", () => {
     expect(row).not.toBeNull();
     expect(within(row as HTMLTableRowElement).getByText("Uncategorized")).toBeInTheDocument();
     fireEvent.click(within(row as HTMLTableRowElement).getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(retryCategorizationMock).toHaveBeenCalledWith("transaction-1"));
+  });
+
+  it("offers a separate categorization action for a not-requested transaction", async () => {
+    const uncategorized = transaction({
+      category_id: null,
+      category_source: null,
+      categorization_status: "not_requested",
+      categorized_at: null,
+      description: "Needs categorization",
+    });
+    listTransactionsMock.mockResolvedValue([uncategorized]);
+    retryCategorizationMock.mockResolvedValue({
+      ...uncategorized,
+      categorization_status: "pending",
+    });
+    renderTransactionsClient();
+
+    const row = (await screen.findByText("Needs categorization")).closest("tr");
+    expect(row).not.toBeNull();
+    fireEvent.click(
+      within(row as HTMLTableRowElement).getByRole("button", { name: "Categorize" }),
+    );
 
     await waitFor(() => expect(retryCategorizationMock).toHaveBeenCalledWith("transaction-1"));
   });

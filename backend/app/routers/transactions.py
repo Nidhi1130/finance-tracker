@@ -8,7 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from app.dependencies import get_current_user_id
 from app.repositories import InvalidReferenceError, transaction_repository
 from app.schemas import (
-    CategorizationSource,
+    CategorizationStatus,
     TransactionCreate,
     TransactionListResponse,
     TransactionOut,
@@ -71,14 +71,19 @@ def retry_categorization(
 ) -> TransactionOut:
     record = repository.prepare_categorization(user_id, transaction_id)
     if record is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
-    if (
-        record.category_id is not None
-        and record.category_source is CategorizationSource.manual
-    ):
+        existing = repository.get(user_id, transaction_id)
+        if existing is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Transaction not found",
+            )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Transaction is already categorized",
+            detail=(
+                "Categorization is already pending"
+                if existing.categorization_status is CategorizationStatus.pending
+                else "Transaction is already categorized"
+            ),
         )
     background_tasks.add_task(categorization_service.categorize, user_id, record.id)
     return record.to_out()

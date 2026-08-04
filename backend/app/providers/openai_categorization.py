@@ -60,6 +60,7 @@ class OpenAICategorizationProvider:
         try:
             response = self._get_client().responses.parse(
                 model=self._model,
+                store=False,
                 input=[
                     {
                         "role": "system",

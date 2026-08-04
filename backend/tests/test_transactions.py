@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from threading import Barrier, Thread
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi import BackgroundTasks, HTTPException
 from fastapi.testclient import TestClient
 
 from app.routers import transactions as transactions_router
-from app.schemas import CategorizationSource
+from app.schemas import CategorizationSource, CategorizationStatus
 
 
 AuthHeaders = Callable[[str], dict[str, str]]
@@ -308,7 +310,7 @@ def test_uncategorized_creation_returns_pending_and_schedules_work(
     assert service.calls == [(DEFAULT_USER_ID, UUID(created["id"]))]
 
 
-def test_retry_returns_202_and_rejects_manual_transaction_with_409(
+def test_retry_returns_202_once_then_rejects_pending_duplicate_without_extra_task(
     client: TestClient,
     auth_headers: AuthHeaders,
     monkeypatch: pytest.MonkeyPatch,
@@ -317,16 +319,37 @@ def test_retry_returns_202_and_rejects_manual_transaction_with_409(
     monkeypatch.setattr(transactions_router, "categorization_service", service, raising=False)
     headers = auth_headers()
     automatic = create_transaction(client, headers, description="Retry me").json()
+    assert transactions_router.repository.finish_without_category(
+        DEFAULT_USER_ID,
+        UUID(automatic["id"]),
+        CategorizationStatus.failed,
+    ) is not None
     service.calls.clear()
 
     retried = client.post(
         f"/transactions/{automatic['id']}/categorize",
         headers=headers,
     )
+    duplicate = client.post(
+        f"/transactions/{automatic['id']}/categorize",
+        headers=headers,
+    )
 
     assert retried.status_code == 202
     assert retried.json()["categorization_status"] == "pending"
+    assert duplicate.status_code == 409
     assert service.calls == [(DEFAULT_USER_ID, UUID(automatic["id"]))]
+
+
+def test_retry_rejects_manual_transaction_and_hides_missing_transaction(
+    client: TestClient,
+    auth_headers: AuthHeaders,
+    user_b_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = CategorizationServiceSpy()
+    monkeypatch.setattr(transactions_router, "categorization_service", service, raising=False)
+    headers = auth_headers()
 
     category = create_category(client, headers, "Protected manual choice")
     manual = create_transaction(client, headers, category_id=category["id"]).json()
@@ -334,11 +357,68 @@ def test_retry_returns_202_and_rejects_manual_transaction_with_409(
         f"/transactions/{manual['id']}/categorize",
         headers=headers,
     )
+    hidden = client.post(
+        f"/transactions/{manual['id']}/categorize",
+        headers=auth_headers(user_b_id),
+    )
     missing = client.post(f"/transactions/{uuid4()}/categorize", headers=headers)
 
     assert rejected.status_code == 409
+    assert hidden.status_code == 404
     assert missing.status_code == 404
-    assert service.calls == [(DEFAULT_USER_ID, UUID(automatic["id"]))]
+    assert service.calls == []
+
+
+def test_concurrent_retry_requests_enqueue_exactly_one_background_task(
+    client: TestClient,
+    auth_headers: AuthHeaders,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = CategorizationServiceSpy()
+    monkeypatch.setattr(transactions_router, "categorization_service", service, raising=False)
+    created = create_transaction(client, auth_headers(), description="Concurrent retry").json()
+    transaction_id = UUID(created["id"])
+    assert transactions_router.repository.finish_without_category(
+        DEFAULT_USER_ID,
+        transaction_id,
+        CategorizationStatus.failed,
+    ) is not None
+    service.calls.clear()
+    real_prepare = transactions_router.repository.prepare_categorization
+    start = Barrier(3)
+
+    def controlled_prepare(user_id: UUID, requested_id: UUID):
+        start.wait(timeout=2)
+        return real_prepare(user_id, requested_id)
+
+    monkeypatch.setattr(
+        transactions_router.repository,
+        "prepare_categorization",
+        controlled_prepare,
+    )
+    outcomes: list[tuple[int, int]] = []
+
+    def retry() -> None:
+        background_tasks = BackgroundTasks()
+        try:
+            transactions_router.retry_categorization(
+                transaction_id,
+                background_tasks,
+                DEFAULT_USER_ID,
+            )
+            outcomes.append((202, len(background_tasks.tasks)))
+        except HTTPException as error:
+            outcomes.append((error.status_code, len(background_tasks.tasks)))
+
+    threads = [Thread(target=retry), Thread(target=retry)]
+    for thread in threads:
+        thread.start()
+    start.wait(timeout=2)
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert sorted(outcomes) == [(202, 1), (409, 0)]
 
 
 @pytest.mark.parametrize(

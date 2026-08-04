@@ -64,8 +64,12 @@ status `not_requested`.
 With `CATEGORIZATION_PROVIDER=openai`, rules still run first. Only unmatched
 descriptions reach the provider, and the request contains description,
 transaction type, and allowed category IDs/names only. Provider failures use
-the existing failed/Retry state. Unsupported provider-mode values stop startup
-with a configuration error.
+the existing failed/Retry state. Responses requests set `store=false`, which
+disables Responses API application-state storage for these calls. This does
+not disable ordinary OpenAI abuse-monitoring retention and is not a claim of
+Zero Data Retention; those controls require separate OpenAI approval and
+configuration. Unsupported provider-mode values stop startup with a
+configuration error. See [OpenAI API data controls](https://platform.openai.com/docs/models/default-usage-policies-by-endpoint).
 
 ## Local setup
 

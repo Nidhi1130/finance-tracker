@@ -223,11 +223,15 @@ class InMemoryTransactionRepository:
     ) -> TransactionRecord | None:
         with self._lock:
             record = self.get(user_id, transaction_id)
-            if record is None or (
-                record.category_id is not None
-                and record.category_source is CategorizationSource.manual
+            if (
+                record is None
+                or record.categorization_status is CategorizationStatus.pending
+                or (
+                    record.category_id is not None
+                    and record.category_source is CategorizationSource.manual
+                )
             ):
-                return record
+                return None
             now = datetime.now(tz=timezone.utc)
             record.category_id = None
             record.category_source = None
@@ -589,6 +593,7 @@ class PostgresTransactionRepository:
                 updated_at = now()
             where id = %s
               and user_id = current_setting('app.user_id')::uuid
+              and categorization_status <> 'pending'
               and (
                 category_id is null
                 or category_source in ('rule', 'openai')
@@ -597,17 +602,8 @@ class PostgresTransactionRepository:
                       category_id, account_id, category_source, categorization_status,
                       categorized_at, created_at, updated_at
         """
-        select_query = """
-            select id, user_id, amount, type, description, date,
-                   category_id, account_id, category_source, categorization_status,
-                   categorized_at, created_at, updated_at
-            from transactions
-            where id = %s and user_id = current_setting('app.user_id')::uuid
-        """
         with database_session(self.database_url, user_id) as connection:
             row = connection.execute(update_query, (transaction_id,)).fetchone()
-            if row is None:
-                row = connection.execute(select_query, (transaction_id,)).fetchone()
         return self._record_from_row(row) if row else None
 
     def apply_automatic_category(

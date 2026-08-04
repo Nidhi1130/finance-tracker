@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+from threading import Barrier, Lock, Thread
 from uuid import UUID
 
 import psycopg
@@ -418,8 +419,10 @@ def test_postgres_retry_repends_automatic_result_and_preserves_manual_result(
     ) is not None
 
     automatic_retry = transactions.prepare_categorization(USER_A_ID, automatic.id)
+    duplicate_retry = transactions.prepare_categorization(USER_A_ID, automatic.id)
 
     assert automatic_retry is not None
+    assert duplicate_retry is None
     assert automatic_retry.category_id is None
     assert automatic_retry.category_source is None
     assert automatic_retry.categorization_status is CategorizationStatus.pending
@@ -438,10 +441,58 @@ def test_postgres_retry_repends_automatic_result_and_preserves_manual_result(
 
     manual_retry = transactions.prepare_categorization(USER_A_ID, manual.id)
 
-    assert manual_retry is not None
-    assert manual_retry.category_id == category.id
-    assert manual_retry.category_source is CategorizationSource.manual
-    assert manual_retry.categorization_status is CategorizationStatus.categorized
+    assert manual_retry is None
+    preserved_manual = transactions.get(USER_A_ID, manual.id)
+    assert preserved_manual is not None
+    assert preserved_manual.category_id == category.id
+    assert preserved_manual.category_source is CategorizationSource.manual
+    assert preserved_manual.categorization_status is CategorizationStatus.categorized
+
+
+def test_postgres_concurrent_retry_has_one_atomic_winner(postgres_url: str) -> None:
+    transactions = PostgresTransactionRepository(postgres_url)
+    transaction = transactions.create(
+        USER_A_ID,
+        TransactionCreate(
+            amount=Decimal("43.00"),
+            type=TxType.expense,
+            description="Concurrent retry parity",
+            date=date(2035, 8, 5),
+        ),
+    )
+    assert transactions.finish_without_category(
+        USER_A_ID,
+        transaction.id,
+        CategorizationStatus.failed,
+    ) is not None
+    start = Barrier(3)
+    lock = Lock()
+    results = []
+    errors: list[BaseException] = []
+
+    def prepare() -> None:
+        try:
+            start.wait(timeout=2)
+            result = transactions.prepare_categorization(USER_A_ID, transaction.id)
+            with lock:
+                results.append(result)
+        except BaseException as error:
+            with lock:
+                errors.append(error)
+
+    threads = [Thread(target=prepare), Thread(target=prepare)]
+    for thread in threads:
+        thread.start()
+    start.wait(timeout=2)
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []
+    assert sum(result is not None for result in results) == 1
+    assert transactions.get(USER_A_ID, transaction.id).categorization_status is (
+        CategorizationStatus.pending
+    )
 
 
 def test_dashboard_aggregates_only_the_current_users_transactions(postgres_url: str) -> None:

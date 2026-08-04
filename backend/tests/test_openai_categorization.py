@@ -70,6 +70,7 @@ def test_provider_returns_allowed_category_and_minimizes_the_request_data() -> N
     assert selected == DINING_ID
     call = responses.calls[0]
     assert call["model"] == "test-model"
+    assert call["store"] is False
     payload = json.loads(call["input"][1]["content"])
     assert payload == {
         "categories": [

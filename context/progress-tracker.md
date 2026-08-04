@@ -97,10 +97,14 @@ Update this file after every meaningful implementation change.
 - The Phase 4 rule-only smoke passed with an ambient OpenAI key present: a
   `spotify` rule categorized its match, an unmatched description finished
   `not_requested`, and the configured provider remained absent.
-- Phase 4 automated verification on 2026-08-04 passed: backend `89 passed,
+- Phase 4 automated verification on 2026-08-04 passed: backend `93 passed,
   1 warning` against isolated PostgreSQL on port 5433; backend Ruff and lock
-  checks clean; frontend `47 passed` across 8 files, lint, and production build
+  checks clean; frontend `49 passed` across 8 files, lint, and production build
   all passed.
+- Phase 4 final review now disables Responses application-state storage with
+  `store=false` without claiming Zero Data Retention, makes retries atomic so
+  duplicate pending requests return `409` without another task, and separates
+  truthful create/edit category copy from the explicit Categorize/Retry action.
 
 ## In Progress
 

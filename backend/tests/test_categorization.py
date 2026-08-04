@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from datetime import datetime, timezone
 from decimal import Decimal
-from threading import Event, Thread
+from threading import Barrier, Event, Thread
 from typing import Callable
 from uuid import UUID
 
@@ -288,6 +288,35 @@ def test_missing_provider_finishes_not_requested_without_changing_category() -> 
     assert uncategorized.category_source is None
     assert uncategorized.categorization_status is CategorizationStatus.not_requested
     assert uncategorized.categorized_at is None
+
+
+def test_in_memory_prepare_categorization_has_one_atomic_winner() -> None:
+    transactions = InMemoryTransactionRepository()
+    transaction = pending_transaction(transactions, "Retry once")
+    assert transactions.finish_without_category(
+        USER_ID,
+        transaction.id,
+        CategorizationStatus.failed,
+    ) is not None
+    start = Barrier(3)
+    results: list[TransactionRecord | None] = []
+
+    def prepare() -> None:
+        start.wait(timeout=2)
+        results.append(transactions.prepare_categorization(USER_ID, transaction.id))
+
+    threads = [Thread(target=prepare), Thread(target=prepare)]
+    for thread in threads:
+        thread.start()
+    start.wait(timeout=2)
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert sum(result is not None for result in results) == 1
+    assert transactions.get(USER_ID, transaction.id).categorization_status is (
+        CategorizationStatus.pending
+    )
 
 
 def test_in_memory_automatic_apply_is_atomic_with_manual_update() -> None:

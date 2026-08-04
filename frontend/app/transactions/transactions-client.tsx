@@ -485,14 +485,18 @@ function TransactionsClientContent() {
                           <td className={styles.amountCol}>{item.amount}</td>
                           <td>
                             <div className={styles.rowActions}>
-                              {item.categorization_status === "failed" ? (
+                              {item.category_id === null &&
+                              (item.categorization_status === "failed" ||
+                                item.categorization_status === "not_requested") ? (
                                 <Button
                                   disabled={retryMutation.isPending}
                                   onClick={() => void handleRetry(item.id)}
                                   size="sm"
                                   type="button"
                                 >
-                                  Retry
+                                  {item.categorization_status === "failed"
+                                    ? "Retry"
+                                    : "Categorize"}
                                 </Button>
                               ) : null}
                               <Button
@@ -569,7 +573,7 @@ function TransactionsClientContent() {
                   value={form.categoryId}
                   onChange={(event) => updateForm("categoryId", event.target.value)}
                 >
-                  <option value="">Auto categorize</option>
+                  <option value="">{isEditing ? "Uncategorized" : "Auto categorize"}</option>
                   {categories.map((category) => (
                     <option key={category.id} value={category.id}>
                       {category.name}

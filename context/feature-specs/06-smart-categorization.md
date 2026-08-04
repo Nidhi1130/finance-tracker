@@ -67,8 +67,10 @@ no background work. A create request without a category records `pending` and
 schedules categorization after the response.
 
 `POST /transactions/{transaction_id}/categorize` retries an eligible
-uncategorized transaction by returning it to `pending`. A manually categorized
-transaction returns `409` so Retry cannot replace a user choice.
+`not_requested` or `failed` transaction, or an existing automatic result, by
+atomically returning it to `pending`. An already-pending or manually
+categorized transaction returns `409`; duplicate requests schedule at most one
+background task.
 
 ## Rule and provider behavior
 
@@ -84,7 +86,10 @@ does not show Retry.
 With `CATEGORIZATION_PROVIDER=openai`, a no-match rule result calls the
 server-side OpenAI adapter. The adapter receives only normalized description,
 transaction type, and visible category IDs/names. It must return one supplied
-ID or null. A valid ID is saved with source `openai`; null becomes
+ID or null. The request sets `store=false`, disabling Responses API
+application-state storage for the call. Ordinary OpenAI abuse-monitoring
+retention is a separate control, so this is not a Zero Data Retention claim. A
+valid ID is saved with source `openai`; null becomes
 `not_requested`; timeout, refusal, malformed output, invalid ID, missing key,
 or provider error becomes `failed` and remains eligible for Retry.
 
@@ -93,9 +98,11 @@ during application startup.
 
 ## Concurrency and manual authority
 
-The background task reloads the transaction and proceeds only while it remains
-pending and uncategorized. The final database update repeats that condition
-atomically. A manual edit changes the source to `manual` and status to
+The retry transition and final background write are conditional database
+updates. Only one retry request can move an eligible row to `pending`; later
+duplicate requests receive `409` and enqueue nothing. The background task
+reloads the transaction and proceeds only while it remains pending and
+uncategorized. A manual edit changes the source to `manual` and status to
 `categorized`, so a late rule or provider result cannot overwrite it.
 
 Clearing a category manually resets the transaction to uncategorized and
@@ -104,13 +111,16 @@ background attempts are safe because only an eligible guarded write succeeds.
 
 ## Frontend behavior
 
-- The empty category choice is labelled `Auto categorize`.
+- The create form's empty category choice is labelled `Auto categorize`; the
+  edit form's empty choice is labelled `Uncategorized` because saving it sets
+  `not_requested` and does not schedule work.
 - Pending rows show `Categorizing…` and are polled every 1.5 seconds only while
   returned data still includes a pending transaction.
 - Rule and OpenAI results show an accessible `Auto` badge naming the source.
 - Manual categories have no Auto badge.
 - Failed provider results show `Uncategorized` and Retry.
-- Rules-mode no-match results show `Uncategorized` without Retry.
+- Eligible `not_requested` results show `Uncategorized` and a separate
+  Categorize action that calls the retry endpoint.
 - `/rules` supports create, edit, enable/disable, and confirmed deletion.
 
 When a user changes an automatically assigned category, the manual correction
@@ -143,10 +153,10 @@ Provider configuration and credentials never reach the frontend.
 - Rule-only smoke with an ambient OpenAI key confirmed provider `none`, a
   `spotify` rule result saved as categorized/rule, and an unmatched description
   saved as uncategorized/`not_requested`, with no OpenAI request.
-- Backend: 89 tests passed against isolated PostgreSQL on port 5433; Ruff and
+- Backend: 93 tests passed against isolated PostgreSQL on port 5433; Ruff and
   lock verification passed. The sole warning is the existing Starlette
   TestClient/httpx deprecation.
-- Frontend: 47 tests across 8 files passed; lint and production build passed.
+- Frontend: 49 tests across 8 files passed; lint and production build passed.
 
 ## Explicit verification gap
 
