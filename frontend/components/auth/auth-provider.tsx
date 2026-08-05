@@ -10,6 +10,7 @@ interface AuthContextValue {
   loading: boolean;
   configured: boolean;
   signInWithPassword: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string) => Promise<{ requiresEmailConfirmation: boolean }>;
   signOut: () => Promise<void>;
 }
 
@@ -69,6 +70,23 @@ export function AuthProvider({ children }: AuthProviderProps) {
         if (error) {
           throw new Error(error.message);
         }
+      },
+      signUp: async (email: string, password: string) => {
+        if (!configured) {
+          throw new Error("Supabase is not configured");
+        }
+
+        const supabase = getSupabaseBrowserClient();
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+        });
+
+        if (error) {
+          throw new Error(error.message);
+        }
+
+        return { requiresEmailConfirmation: !data.session };
       },
       signOut: async () => {
         if (!configured) {

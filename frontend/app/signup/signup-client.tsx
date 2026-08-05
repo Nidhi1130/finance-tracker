@@ -7,15 +7,16 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/components/auth/auth-provider";
-import styles from "./login.module.css";
+import styles from "./signup.module.css";
 
-export function LoginClient() {
+export function SignupClient() {
   const router = useRouter();
-  const { signInWithPassword, loading, configured, session } = useAuth();
+  const { signUp, loading, configured, session } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [checkEmail, setCheckEmail] = useState(false);
 
   useEffect(() => {
     if (session) {
@@ -29,10 +30,14 @@ export function LoginClient() {
     setError(null);
 
     try {
-      await signInWithPassword(email, password);
-      router.push("/transactions");
+      const { requiresEmailConfirmation } = await signUp(email, password);
+      if (requiresEmailConfirmation) {
+        setCheckEmail(true);
+      } else {
+        router.push("/transactions");
+      }
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Sign in failed");
+      setError(submitError instanceof Error ? submitError.message : "Sign up failed");
     } finally {
       setSaving(false);
     }
@@ -48,8 +53,8 @@ export function LoginClient() {
         <p className={styles.eyebrow}>Supabase not configured</p>
         <h1 className={styles.title}>Set up `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`.</h1>
         <p className={styles.subtitle}>
-          The login form needs a real Supabase project to work. Add the
-          values to your local environment and restart the frontend.
+          Sign-up needs a real Supabase project to work. Add the values to
+          your local environment and restart the frontend.
         </p>
       </Card>
     );
@@ -59,13 +64,33 @@ export function LoginClient() {
     return <p className={styles.status}>Redirecting to transactions...</p>;
   }
 
+  if (checkEmail) {
+    return (
+      <div className={styles.page}>
+        <Card className={styles.card}>
+          <p className={styles.eyebrow}>Finance Flow</p>
+          <h1 className={styles.title}>Check your email</h1>
+          <p className={styles.subtitle}>
+            We sent a confirmation link to {email}. Click it and you&apos;ll
+            be brought straight back into the app, signed in. If nothing
+            happens,{" "}
+            <Link className={styles.link} href="/login">
+              sign in manually
+            </Link>
+            .
+          </p>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className={styles.page}>
       <Card className={styles.card}>
         <p className={styles.eyebrow}>Finance Flow</p>
-        <h1 className={styles.title}>Sign in to Finance Flow</h1>
+        <h1 className={styles.title}>Create your account</h1>
         <p className={styles.subtitle}>
-          Use your Supabase email and password to access transactions,
+          Sign up with an email and password to start tracking transactions,
           categories, and accounts.
         </p>
 
@@ -78,7 +103,8 @@ export function LoginClient() {
             onChange={(event) => setEmail(event.target.value)}
           />
           <Input
-            autoComplete="current-password"
+            autoComplete="new-password"
+            minLength={6}
             placeholder="Password"
             type="password"
             value={password}
@@ -86,14 +112,14 @@ export function LoginClient() {
           />
           {error ? <p className={styles.error}>{error}</p> : null}
           <Button disabled={saving} type="submit">
-            {saving ? "Signing in..." : "Sign in"}
+            {saving ? "Creating account..." : "Create account"}
           </Button>
         </form>
 
         <p className={styles.footer}>
-          Don&apos;t have an account?{" "}
-          <Link className={styles.link} href="/signup">
-            Sign up
+          Already have an account?{" "}
+          <Link className={styles.link} href="/login">
+            Sign in
           </Link>
         </p>
       </Card>
