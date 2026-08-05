@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -7,6 +9,22 @@ from app.routers.categorization_rules import router as categorization_rules_rout
 from app.routers.dashboard import router as dashboard_router
 from app.routers.transactions import router as transactions_router
 
+_DEFAULT_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3100",
+    "http://127.0.0.1:3100",
+]
+
+
+def _allowed_origins() -> list[str]:
+    raw = os.getenv("ALLOWED_ORIGINS")
+    if not raw:
+        return _DEFAULT_ALLOWED_ORIGINS
+    origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return origins or _DEFAULT_ALLOWED_ORIGINS
+
+
 app = FastAPI(
     title="Finance Flow API",
     version="0.1.0",
@@ -14,12 +32,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:3100",
-        "http://127.0.0.1:3100",
-    ],
+    allow_origins=_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
