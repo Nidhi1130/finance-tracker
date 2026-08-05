@@ -3,13 +3,21 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from threading import RLock
 from typing import TYPE_CHECKING, Protocol
 from uuid import UUID, uuid4
 
 import psycopg
 
 from app.repositories.base import InvalidReferenceError, database_session
-from app.schemas import TransactionCreate, TransactionOut, TransactionUpdate, TxType
+from app.schemas import (
+    CategorizationSource,
+    CategorizationStatus,
+    TransactionCreate,
+    TransactionOut,
+    TransactionUpdate,
+    TxType,
+)
 
 if TYPE_CHECKING:
     from app.repositories.accounts import AccountRepository
@@ -28,6 +36,9 @@ class TransactionRecord:
     account_id: UUID | None
     created_at: datetime
     updated_at: datetime
+    category_source: CategorizationSource | None = None
+    categorization_status: CategorizationStatus = CategorizationStatus.not_requested
+    categorized_at: datetime | None = None
 
     def to_out(self) -> TransactionOut:
         return TransactionOut.model_validate(
@@ -39,6 +50,9 @@ class TransactionRecord:
                 "date": self.date,
                 "category_id": self.category_id,
                 "account_id": self.account_id,
+                "category_source": self.category_source,
+                "categorization_status": self.categorization_status,
+                "categorized_at": self.categorized_at,
                 "created_at": self.created_at,
                 "updated_at": self.updated_at,
             },
@@ -68,6 +82,27 @@ class TransactionRepository(Protocol):
         payload: TransactionUpdate,
     ) -> TransactionRecord | None: ...
 
+    def prepare_categorization(
+        self,
+        user_id: UUID,
+        transaction_id: UUID,
+    ) -> TransactionRecord | None: ...
+
+    def apply_automatic_category(
+        self,
+        user_id: UUID,
+        transaction_id: UUID,
+        category_id: UUID,
+        source: CategorizationSource,
+    ) -> TransactionRecord | None: ...
+
+    def finish_without_category(
+        self,
+        user_id: UUID,
+        transaction_id: UUID,
+        status: CategorizationStatus,
+    ) -> TransactionRecord | None: ...
+
     def delete(self, user_id: UUID, transaction_id: UUID) -> bool: ...
 
     def clear(self) -> None: ...
@@ -78,6 +113,7 @@ class InMemoryTransactionRepository:
     _items: dict[UUID, dict[UUID, TransactionRecord]] = field(default_factory=dict)
     category_repository: CategoryRepository | None = None
     account_repository: AccountRepository | None = None
+    _lock: RLock = field(default_factory=RLock, init=False, repr=False)
 
     def list(
         self,
@@ -119,6 +155,15 @@ class InMemoryTransactionRepository:
             date=payload.date,
             category_id=payload.category_id,
             account_id=payload.account_id,
+            category_source=(
+                CategorizationSource.manual if payload.category_id is not None else None
+            ),
+            categorization_status=(
+                CategorizationStatus.categorized
+                if payload.category_id is not None
+                else CategorizationStatus.pending
+            ),
+            categorized_at=now if payload.category_id is not None else None,
             created_at=now,
             updated_at=now,
         )
@@ -126,7 +171,8 @@ class InMemoryTransactionRepository:
         return record
 
     def get(self, user_id: UUID, transaction_id: UUID) -> TransactionRecord | None:
-        return self._items.get(user_id, {}).get(transaction_id)
+        with self._lock:
+            return self._items.get(user_id, {}).get(transaction_id)
 
     def update(
         self,
@@ -134,32 +180,114 @@ class InMemoryTransactionRepository:
         transaction_id: UUID,
         payload: TransactionUpdate,
     ) -> TransactionRecord | None:
-        record = self.get(user_id, transaction_id)
-        if record is None:
-            return None
+        with self._lock:
+            record = self.get(user_id, transaction_id)
+            if record is None:
+                return None
 
-        data = payload.model_dump(exclude_unset=True)
-        self._validate_references(
-            user_id,
-            data.get("category_id") if "category_id" in data else None,
-            data.get("account_id") if "account_id" in data else None,
-            validate_category="category_id" in data,
-            validate_account="account_id" in data,
-        )
-        if "amount" in data:
-            record.amount = data["amount"]
-        if "type" in data:
-            record.type = data["type"]
-        if "description" in data:
-            record.description = data["description"]
-        if "date" in data:
-            record.date = data["date"]
-        if "category_id" in data:
-            record.category_id = data["category_id"]
-        if "account_id" in data:
-            record.account_id = data["account_id"]
-        record.updated_at = datetime.now(tz=UTC)
-        return record
+            data = payload.model_dump(exclude_unset=True)
+            self._validate_references(
+                user_id,
+                data.get("category_id") if "category_id" in data else None,
+                data.get("account_id") if "account_id" in data else None,
+                validate_category="category_id" in data,
+                validate_account="account_id" in data,
+            )
+            if "amount" in data:
+                record.amount = data["amount"]
+            if "type" in data:
+                record.type = data["type"]
+            if "description" in data:
+                record.description = data["description"]
+            if "date" in data:
+                record.date = data["date"]
+            if "category_id" in data:
+                record.category_id = data["category_id"]
+                if record.category_id is None:
+                    record.category_source = None
+                    record.categorization_status = CategorizationStatus.not_requested
+                    record.categorized_at = None
+                else:
+                    record.category_source = CategorizationSource.manual
+                    record.categorization_status = CategorizationStatus.categorized
+                    record.categorized_at = datetime.now(tz=UTC)
+            if "account_id" in data:
+                record.account_id = data["account_id"]
+            record.updated_at = datetime.now(tz=UTC)
+            return record
+
+    def prepare_categorization(
+        self,
+        user_id: UUID,
+        transaction_id: UUID,
+    ) -> TransactionRecord | None:
+        with self._lock:
+            record = self.get(user_id, transaction_id)
+            if (
+                record is None
+                or record.categorization_status is CategorizationStatus.pending
+                or (
+                    record.category_id is not None
+                    and record.category_source is CategorizationSource.manual
+                )
+            ):
+                return None
+            now = datetime.now(tz=UTC)
+            record.category_id = None
+            record.category_source = None
+            record.categorization_status = CategorizationStatus.pending
+            record.categorized_at = None
+            record.updated_at = now
+            return record
+
+    def apply_automatic_category(
+        self,
+        user_id: UUID,
+        transaction_id: UUID,
+        category_id: UUID,
+        source: CategorizationSource,
+    ) -> TransactionRecord | None:
+        with self._lock:
+            record = self.get(user_id, transaction_id)
+            if (
+                record is None
+                or record.category_id is not None
+                or record.categorization_status is not CategorizationStatus.pending
+            ):
+                return None
+            self._validate_references(
+                user_id,
+                category_id,
+                None,
+                validate_account=False,
+            )
+            now = datetime.now(tz=UTC)
+            record.category_id = category_id
+            record.category_source = source
+            record.categorization_status = CategorizationStatus.categorized
+            record.categorized_at = now
+            record.updated_at = now
+            return record
+
+    def finish_without_category(
+        self,
+        user_id: UUID,
+        transaction_id: UUID,
+        status: CategorizationStatus,
+    ) -> TransactionRecord | None:
+        with self._lock:
+            record = self.get(user_id, transaction_id)
+            if (
+                record is None
+                or record.category_id is not None
+                or record.categorization_status is not CategorizationStatus.pending
+            ):
+                return None
+            record.category_source = None
+            record.categorization_status = status
+            record.categorized_at = None
+            record.updated_at = datetime.now(tz=UTC)
+            return record
 
     def delete(self, user_id: UUID, transaction_id: UUID) -> bool:
         user_items = self._items.get(user_id)
@@ -227,6 +355,13 @@ class PostgresTransactionRepository:
             date=row["date"],
             category_id=UUID(str(row["category_id"])) if row["category_id"] else None,
             account_id=UUID(str(row["account_id"])) if row["account_id"] else None,
+            category_source=(
+                CategorizationSource(str(row["category_source"]))
+                if row["category_source"]
+                else None
+            ),
+            categorization_status=CategorizationStatus(str(row["categorization_status"])),
+            categorized_at=row["categorized_at"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -242,6 +377,15 @@ class PostgresTransactionRepository:
                 "date": row["date"],
                 "category_id": UUID(str(row["category_id"])) if row["category_id"] else None,
                 "account_id": UUID(str(row["account_id"])) if row["account_id"] else None,
+                "category_source": (
+                    CategorizationSource(str(row["category_source"]))
+                    if row["category_source"]
+                    else None
+                ),
+                "categorization_status": CategorizationStatus(
+                    str(row["categorization_status"])
+                ),
+                "categorized_at": row["categorized_at"],
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
             },
@@ -278,7 +422,8 @@ class PostgresTransactionRepository:
 
         query = f"""
             select id, user_id, amount, type, description, date,
-                   category_id, account_id, created_at, updated_at
+                   category_id, account_id, category_source, categorization_status,
+                   categorized_at, created_at, updated_at
             from transactions
             where {" and ".join(conditions)}
             order by date desc, created_at desc
@@ -289,6 +434,14 @@ class PostgresTransactionRepository:
         return [self._record_from_row(row) for row in rows]
 
     def create(self, user_id: UUID, payload: TransactionCreate) -> TransactionRecord:
+        category_source = (
+            CategorizationSource.manual.value if payload.category_id is not None else None
+        )
+        categorization_status = (
+            CategorizationStatus.categorized.value
+            if payload.category_id is not None
+            else CategorizationStatus.pending.value
+        )
         query = """
             insert into transactions (
                 id,
@@ -298,11 +451,15 @@ class PostgresTransactionRepository:
                 description,
                 date,
                 category_id,
-                account_id
+                account_id,
+                category_source,
+                categorization_status,
+                categorized_at
             )
-            values (%s, %s, %s, %s, %s, %s, %s, %s)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             returning id, user_id, amount, type, description, date,
-                      category_id, account_id, created_at, updated_at
+                      category_id, account_id, category_source, categorization_status,
+                      categorized_at, created_at, updated_at
         """
 
         params = (
@@ -314,6 +471,9 @@ class PostgresTransactionRepository:
             payload.date,
             payload.category_id,
             payload.account_id,
+            category_source,
+            categorization_status,
+            datetime.now(tz=UTC) if payload.category_id is not None else None,
         )
         try:
             with database_session(self.database_url, user_id) as connection:
@@ -332,7 +492,8 @@ class PostgresTransactionRepository:
     def get(self, user_id: UUID, transaction_id: UUID) -> TransactionRecord | None:
         query = """
             select id, user_id, amount, type, description, date,
-                   category_id, account_id, created_at, updated_at
+                   category_id, account_id, category_source, categorization_status,
+                   categorized_at, created_at, updated_at
             from transactions
             where id = %s and user_id = current_setting('app.user_id')::uuid
         """
@@ -370,6 +531,22 @@ class PostgresTransactionRepository:
         if "category_id" in data:
             assignments.append("category_id = %s")
             params.append(data["category_id"])
+            if data["category_id"] is None:
+                assignments.extend(
+                    [
+                        "category_source = null",
+                        "categorization_status = 'not_requested'",
+                        "categorized_at = null",
+                    ],
+                )
+            else:
+                assignments.extend(
+                    [
+                        "category_source = 'manual'",
+                        "categorization_status = 'categorized'",
+                        "categorized_at = now()",
+                    ],
+                )
         if "account_id" in data:
             assignments.append("account_id = %s")
             params.append(data["account_id"])
@@ -382,7 +559,8 @@ class PostgresTransactionRepository:
             set {", ".join(assignments)}
             where id = %s and user_id = %s
             returning id, user_id, amount, type, description, date,
-                      category_id, account_id, created_at, updated_at
+                      category_id, account_id, category_source, categorization_status,
+                      categorized_at, created_at, updated_at
         """
         try:
             with database_session(self.database_url, user_id) as connection:
@@ -400,6 +578,99 @@ class PostgresTransactionRepository:
         if row is None:
             return None
         return self._record_from_row(row)
+
+    def prepare_categorization(
+        self,
+        user_id: UUID,
+        transaction_id: UUID,
+    ) -> TransactionRecord | None:
+        update_query = """
+            update transactions
+            set category_id = null,
+                category_source = null,
+                categorization_status = 'pending',
+                categorized_at = null,
+                updated_at = now()
+            where id = %s
+              and user_id = current_setting('app.user_id')::uuid
+              and categorization_status <> 'pending'
+              and (
+                category_id is null
+                or category_source in ('rule', 'openai')
+              )
+            returning id, user_id, amount, type, description, date,
+                      category_id, account_id, category_source, categorization_status,
+                      categorized_at, created_at, updated_at
+        """
+        with database_session(self.database_url, user_id) as connection:
+            row = connection.execute(update_query, (transaction_id,)).fetchone()
+        return self._record_from_row(row) if row else None
+
+    def apply_automatic_category(
+        self,
+        user_id: UUID,
+        transaction_id: UUID,
+        category_id: UUID,
+        source: CategorizationSource,
+    ) -> TransactionRecord | None:
+        query = """
+            update transactions
+            set category_id = %s,
+                category_source = %s,
+                categorization_status = 'categorized',
+                categorized_at = now(),
+                updated_at = now()
+            where id = %s
+              and user_id = current_setting('app.user_id')::uuid
+              and category_id is null
+              and categorization_status = 'pending'
+            returning id, user_id, amount, type, description, date,
+                      category_id, account_id, category_source, categorization_status,
+                      categorized_at, created_at, updated_at
+        """
+        try:
+            with database_session(self.database_url, user_id) as connection:
+                self._validate_references(
+                    connection,
+                    user_id,
+                    category_id,
+                    None,
+                    validate_account=False,
+                )
+                row = connection.execute(
+                    query,
+                    (category_id, source.value, transaction_id),
+                ).fetchone()
+        except (psycopg.errors.CheckViolation, psycopg.errors.ForeignKeyViolation):
+            return None
+        return self._record_from_row(row) if row else None
+
+    def finish_without_category(
+        self,
+        user_id: UUID,
+        transaction_id: UUID,
+        status: CategorizationStatus,
+    ) -> TransactionRecord | None:
+        query = """
+            update transactions
+            set category_source = null,
+                categorization_status = %s,
+                categorized_at = null,
+                updated_at = now()
+            where id = %s
+              and user_id = current_setting('app.user_id')::uuid
+              and category_id is null
+              and categorization_status = 'pending'
+            returning id, user_id, amount, type, description, date,
+                      category_id, account_id, category_source, categorization_status,
+                      categorized_at, created_at, updated_at
+        """
+        with database_session(self.database_url, user_id) as connection:
+            row = connection.execute(
+                query,
+                (status.value, transaction_id),
+            ).fetchone()
+        return self._record_from_row(row) if row else None
 
     def delete(self, user_id: UUID, transaction_id: UUID) -> bool:
         query = """

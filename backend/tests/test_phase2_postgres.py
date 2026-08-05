@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+from threading import Barrier, Lock, Thread
 from typing import Self
 from uuid import UUID
 
@@ -15,25 +16,42 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 
 from app.repositories.accounts import PostgresAccountRepository
-from app.repositories.base import InvalidReferenceError, database_session
+from app.repositories.base import (
+    DuplicateResourceError,
+    InvalidReferenceError,
+    database_session,
+)
 from app.repositories.categories import PostgresCategoryRepository
+from app.repositories.categorization_rules import PostgresCategorizationRuleRepository
 from app.repositories.dashboard import PostgresDashboardRepository
 from app.repositories.transactions import PostgresTransactionRepository
 from app.schemas import (
     AccountCreate,
+    CategorizationRuleCreate,
+    CategorizationRuleUpdate,
+    CategorizationSource,
+    CategorizationStatus,
     CategoryCreate,
     DashboardBucket,
     TransactionCreate,
+    TransactionUpdate,
     TxType,
 )
 
 ROOT = Path(__file__).parents[2]
 INIT_SQL = (ROOT / "backend/sql/init.sql").read_text()
 MIGRATION_SQL = (ROOT / "backend/sql/migrations/003_phase_3_dashboard_index.sql").read_text()
+PHASE4_MIGRATION = ROOT / "backend/sql/migrations/004_phase_4_smart_categorization.sql"
 USER_A_ID = UUID("10000000-0000-4000-8000-000000000001")
 USER_B_ID = UUID("20000000-0000-4000-8000-000000000002")
 APP_ROLE = "finance_app_test"
 APP_PASSWORD = "finance_app_test"
+
+
+def apply_sql(postgres_url: str, sql_text: str) -> None:
+    with psycopg.connect(postgres_url, autocommit=True) as connection:
+        connection.execute("select set_config('app.user_id', %s, false)", (str(USER_A_ID),))
+        connection.execute(sql_text)
 
 
 def _app_database_url(admin_url: str) -> str:
@@ -70,7 +88,11 @@ def postgres_url() -> str:
             ),
         )
         connection.execute(f"grant create, usage on schema public to {APP_ROLE}")
+        connection.execute("drop table if exists categorization_rules cascade")
         connection.execute("drop table if exists transactions, accounts, categories cascade")
+        connection.execute(
+            "drop function if exists enforce_categorization_rule_category_ownership()"
+        )
         connection.execute("drop function if exists enforce_transaction_reference_ownership()")
         connection.execute("drop schema if exists auth cascade")
 
@@ -157,6 +179,328 @@ def test_postgres_rls_and_transaction_references(postgres_url: str) -> None:
     assert preserved is not None
     assert preserved.category_id is None
     assert preserved.account_id is None
+
+
+def test_phase4_migration_is_idempotent_and_backfills_transactions(postgres_url: str) -> None:
+    with database_session(postgres_url, USER_A_ID) as connection:
+        connection.execute("drop table if exists categorization_rules cascade")
+        connection.execute(
+            "drop function if exists enforce_categorization_rule_category_ownership()"
+        )
+        connection.execute("alter table transactions drop column if exists category_source")
+        connection.execute("alter table transactions drop column if exists categorization_status")
+        connection.execute("alter table transactions drop column if exists categorized_at")
+        category_id = connection.execute(
+            "insert into categories (user_id, name, color) values (%s, 'Legacy', '#123ABC') returning id",
+            (USER_A_ID,),
+        ).fetchone()["id"]
+        categorized_id = connection.execute(
+            """
+            insert into transactions (user_id, amount, type, date, category_id)
+            values (%s, 20.00, 'expense', '2030-01-02', %s)
+            returning id
+            """,
+            (USER_A_ID, category_id),
+        ).fetchone()["id"]
+        uncategorized_id = connection.execute(
+            """
+            insert into transactions (user_id, amount, type, date)
+            values (%s, 10.00, 'expense', '2030-01-02')
+            returning id
+            """,
+            (USER_A_ID,),
+        ).fetchone()["id"]
+
+    apply_sql(postgres_url, PHASE4_MIGRATION.read_text())
+    apply_sql(postgres_url, PHASE4_MIGRATION.read_text())
+
+    with database_session(postgres_url, USER_A_ID) as connection:
+        metadata = connection.execute(
+            """
+            select id, category_source, categorization_status, categorized_at
+            from transactions
+            where id in (%s, %s)
+            order by id
+            """,
+            (categorized_id, uncategorized_id),
+        ).fetchall()
+
+    by_id = {item["id"]: item for item in metadata}
+    assert by_id[categorized_id]["category_source"] == "manual"
+    assert by_id[categorized_id]["categorization_status"] == "categorized"
+    assert by_id[categorized_id]["categorized_at"] is not None
+    assert by_id[uncategorized_id]["category_source"] is None
+    assert by_id[uncategorized_id]["categorization_status"] == "not_requested"
+    assert by_id[uncategorized_id]["categorized_at"] is None
+
+
+def test_phase4_rules_enforce_category_ownership_and_own_row_rls(postgres_url: str) -> None:
+    categories = PostgresCategoryRepository(postgres_url)
+    user_a_category = categories.create(
+        USER_A_ID,
+        CategoryCreate(name="Rule category", color="#123ABC"),
+    )
+    user_b_category = categories.create(
+        USER_B_ID,
+        CategoryCreate(name="Other rule category", color="#ABC123"),
+    )
+    with database_session(postgres_url, USER_A_ID) as connection:
+        global_category_id = connection.execute(
+            "select id from categories where user_id is null limit 1"
+        ).fetchone()["id"]
+
+    with (
+        pytest.raises(psycopg.errors.CheckViolation),
+        database_session(postgres_url, USER_A_ID) as connection,
+    ):
+        connection.execute(
+            """
+            insert into categorization_rules (user_id, keyword, category_id)
+            values (%s, 'other', %s)
+            """,
+            (USER_A_ID, user_b_category.id),
+        )
+
+    with database_session(postgres_url, USER_A_ID) as connection:
+        rule = connection.execute(
+            """
+            insert into categorization_rules (user_id, keyword, category_id)
+            values (%s, 'coffee', %s)
+            returning id
+            """,
+            (USER_A_ID, user_a_category.id),
+        ).fetchone()
+        assert rule is not None
+        rule_id = rule["id"]
+
+    with database_session(postgres_url, USER_B_ID) as connection:
+        assert connection.execute("select id from categorization_rules").fetchall() == []
+        assert connection.execute(
+            "update categorization_rules set enabled = false where id = %s",
+            (rule_id,),
+        ).rowcount == 0
+        assert connection.execute(
+            "delete from categorization_rules where id = %s",
+            (rule_id,),
+        ).rowcount == 0
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            connection.execute(
+                """
+                insert into categorization_rules (user_id, keyword, category_id)
+                values (%s, 'impersonated', %s)
+                """,
+                (USER_A_ID, global_category_id),
+            )
+
+    with database_session(postgres_url, USER_A_ID) as connection:
+        assert connection.execute(
+            "select enabled from categorization_rules where id = %s",
+            (rule_id,),
+        ).fetchone()["enabled"] is True
+
+
+def test_postgres_categorization_rule_repository_crud_and_validation(postgres_url: str) -> None:
+    categories = PostgresCategoryRepository(postgres_url)
+    rules = PostgresCategorizationRuleRepository(postgres_url)
+    private_category = categories.create(
+        USER_A_ID,
+        CategoryCreate(name="Repository rule category", color="#123ABC"),
+    )
+    unavailable_category = categories.create(
+        USER_B_ID,
+        CategoryCreate(name="Unavailable rule category", color="#ABC123"),
+    )
+
+    first = rules.create(
+        USER_A_ID,
+        CategorizationRuleCreate(keyword="Zulu", category_id=private_category.id),
+    )
+    second = rules.create(
+        USER_A_ID,
+        CategorizationRuleCreate(
+            keyword="Alpha",
+            category_id=private_category.id,
+            enabled=False,
+        ),
+    )
+
+    assert (first.category_name, first.category_color) == ("Repository rule category", "#123ABC")
+    listed_ids = [item.id for item in rules.list(USER_A_ID)]
+    assert [item_id for item_id in listed_ids if item_id in {first.id, second.id}] == [
+        second.id,
+        first.id,
+    ]
+    enabled_ids = {item.id for item in rules.list(USER_A_ID, enabled_only=True)}
+    assert first.id in enabled_ids
+    assert second.id not in enabled_ids
+
+    updated = rules.update(
+        USER_A_ID,
+        second.id,
+        CategorizationRuleUpdate(keyword="Beta", enabled=True),
+    )
+    assert updated is not None
+    assert (updated.keyword, updated.enabled) == ("Beta", True)
+    assert rules.get(USER_B_ID, first.id) is None
+    assert rules.delete(USER_A_ID, first.id)
+    assert rules.get(USER_A_ID, first.id) is None
+
+    with pytest.raises(DuplicateResourceError):
+        rules.create(
+            USER_A_ID,
+            CategorizationRuleCreate(keyword="BETA", category_id=private_category.id),
+        )
+    with pytest.raises(InvalidReferenceError, match="category_id"):
+        rules.create(
+            USER_A_ID,
+            CategorizationRuleCreate(keyword="Unavailable", category_id=unavailable_category.id),
+        )
+
+
+def test_postgres_automatic_category_update_loses_to_committed_manual_update(
+    postgres_url: str,
+) -> None:
+    categories = PostgresCategoryRepository(postgres_url)
+    transactions = PostgresTransactionRepository(postgres_url)
+    manual_category = categories.create(
+        USER_A_ID,
+        CategoryCreate(name="Committed manual category", color="#123ABC"),
+    )
+    automatic_category = categories.create(
+        USER_A_ID,
+        CategoryCreate(name="Late automatic category", color="#ABC123"),
+    )
+    transaction = transactions.create(
+        USER_A_ID,
+        TransactionCreate(
+            amount=Decimal("40.00"),
+            type=TxType.expense,
+            description="Concurrent merchant",
+            date=date(2035, 8, 2),
+        ),
+    )
+    manually_updated = transactions.update(
+        USER_A_ID,
+        transaction.id,
+        TransactionUpdate(category_id=manual_category.id),
+    )
+
+    automatic_result = transactions.apply_automatic_category(
+        USER_A_ID,
+        transaction.id,
+        automatic_category.id,
+        CategorizationSource.openai,
+    )
+
+    assert manually_updated is not None
+    assert automatic_result is None
+    preserved = transactions.get(USER_A_ID, transaction.id)
+    assert preserved is not None
+    assert preserved.category_id == manual_category.id
+    assert preserved.category_source is CategorizationSource.manual
+    assert preserved.categorization_status is CategorizationStatus.categorized
+
+
+def test_postgres_retry_repends_automatic_result_and_preserves_manual_result(
+    postgres_url: str,
+) -> None:
+    categories = PostgresCategoryRepository(postgres_url)
+    transactions = PostgresTransactionRepository(postgres_url)
+    category = categories.create(
+        USER_A_ID,
+        CategoryCreate(name="Retry parity category", color="#456DEF"),
+    )
+    automatic = transactions.create(
+        USER_A_ID,
+        TransactionCreate(
+            amount=Decimal("41.00"),
+            type=TxType.expense,
+            description="Automatic retry parity",
+            date=date(2035, 8, 3),
+        ),
+    )
+    assert transactions.apply_automatic_category(
+        USER_A_ID,
+        automatic.id,
+        category.id,
+        CategorizationSource.rule,
+    ) is not None
+
+    automatic_retry = transactions.prepare_categorization(USER_A_ID, automatic.id)
+    duplicate_retry = transactions.prepare_categorization(USER_A_ID, automatic.id)
+
+    assert automatic_retry is not None
+    assert duplicate_retry is None
+    assert automatic_retry.category_id is None
+    assert automatic_retry.category_source is None
+    assert automatic_retry.categorization_status is CategorizationStatus.pending
+    assert automatic_retry.categorized_at is None
+
+    manual = transactions.create(
+        USER_A_ID,
+        TransactionCreate(
+            amount=Decimal("42.00"),
+            type=TxType.expense,
+            description="Manual retry protection",
+            date=date(2035, 8, 4),
+            category_id=category.id,
+        ),
+    )
+
+    manual_retry = transactions.prepare_categorization(USER_A_ID, manual.id)
+
+    assert manual_retry is None
+    preserved_manual = transactions.get(USER_A_ID, manual.id)
+    assert preserved_manual is not None
+    assert preserved_manual.category_id == category.id
+    assert preserved_manual.category_source is CategorizationSource.manual
+    assert preserved_manual.categorization_status is CategorizationStatus.categorized
+
+
+def test_postgres_concurrent_retry_has_one_atomic_winner(postgres_url: str) -> None:
+    transactions = PostgresTransactionRepository(postgres_url)
+    transaction = transactions.create(
+        USER_A_ID,
+        TransactionCreate(
+            amount=Decimal("43.00"),
+            type=TxType.expense,
+            description="Concurrent retry parity",
+            date=date(2035, 8, 5),
+        ),
+    )
+    assert transactions.finish_without_category(
+        USER_A_ID,
+        transaction.id,
+        CategorizationStatus.failed,
+    ) is not None
+    start = Barrier(3)
+    lock = Lock()
+    results = []
+    errors: list[BaseException] = []
+
+    def prepare() -> None:
+        try:
+            start.wait(timeout=2)
+            result = transactions.prepare_categorization(USER_A_ID, transaction.id)
+            with lock:
+                results.append(result)
+        except BaseException as error:  # noqa: BLE001 - captures thread failures for assertions
+            with lock:
+                errors.append(error)
+
+    threads = [Thread(target=prepare), Thread(target=prepare)]
+    for thread in threads:
+        thread.start()
+    start.wait(timeout=2)
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []
+    assert sum(result is not None for result in results) == 1
+    assert transactions.get(USER_A_ID, transaction.id).categorization_status is (
+        CategorizationStatus.pending
+    )
 
 
 def test_dashboard_aggregates_only_the_current_users_transactions(postgres_url: str) -> None:

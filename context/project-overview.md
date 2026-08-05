@@ -59,7 +59,10 @@ real Open Banking / PSD2 data.
 
 ### Smart Categorization (Phase 4)
 
-- Rule-based pass first (keyword → category), LLM fallback for the rest.
+- Rule-based pass first (keyword → category); unmatched transactions stay
+  uncategorized by default.
+- Optional OpenAI categorization is an explicit server-side opt-in, not a
+  requirement for the phase.
 - "Auto" badge on auto-categorized transactions; user can always override.
 - User-managed rules manager (keyword → category).
 - Categorization runs as a background task so creating a transaction stays
@@ -84,7 +87,7 @@ real Open Banking / PSD2 data.
 - Full transaction CRUD with validation and per-user scoping.
 - User-managed categories and optional accounts, with list filtering.
 - Aggregation dashboard (summary, by-category, over-time).
-- Rule-based + LLM-assisted categorization as a background task.
+- Rule-based background categorization with an optional, explicit OpenAI mode.
 - Supabase Auth, deployment, tests, CI, and a strong README.
 
 ### Out of Scope

@@ -9,12 +9,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 os.environ.pop("DATABASE_URL", None)
+os.environ.pop("OPENAI_API_KEY", None)
 os.environ.pop("SUPABASE_URL", None)
 os.environ.pop("SUPABASE_JWT_SECRET", None)
 
 from app.main import app
 from app.repositories import (
     account_repository,
+    categorization_rule_repository,
     category_repository,
     transaction_repository,
 )
@@ -59,6 +61,7 @@ def user_b_id() -> str:
 
 @pytest.fixture(autouse=True)
 def clear_repositories() -> None:
+    categorization_rule_repository.clear()
     transaction_repository.clear()
     category_repository.clear()
     account_repository.clear()

@@ -7,31 +7,31 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Modal } from "@/components/ui/modal";
 import { Textarea } from "@/components/ui/textarea";
-import { requestJson } from "@/lib/api";
 import { accountQueryKey, listAccounts } from "@/lib/accounts";
+import {
+  categorizationRuleQueryKey,
+  createCategorizationRule,
+} from "@/lib/categorization-rules";
 import { categoryQueryKey, listCategories } from "@/lib/categories";
 import { cn } from "@/lib/cn";
+import {
+  deleteTransaction,
+  listTransactions,
+  retryCategorization,
+  saveTransaction,
+  suggestRuleKeyword,
+  transactionQueryKey,
+} from "@/lib/transactions";
+import type {
+  Transaction,
+  TransactionFilters,
+  TransactionPayload,
+  TxType,
+} from "@/lib/transactions";
 import { useAuth } from "@/components/auth/auth-provider";
 import styles from "./transactions.module.css";
-
-type TxType = "income" | "expense";
-
-interface Transaction {
-  id: string;
-  amount: string;
-  type: TxType;
-  description: string | null;
-  date: string;
-  category_id: string | null;
-  account_id: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-interface TransactionListResponse {
-  items: Transaction[];
-}
 
 interface TransactionFormState {
   amount: string;
@@ -42,21 +42,9 @@ interface TransactionFormState {
   accountId: string;
 }
 
-interface TransactionFilters {
-  from: string;
-  to: string;
-  type: "" | TxType;
+interface RuleOffer {
+  keyword: string;
   categoryId: string;
-  accountId: string;
-}
-
-interface TransactionPayload {
-  amount: string;
-  type: TxType;
-  date: string;
-  description: string | null;
-  category_id: string | null;
-  account_id: string | null;
 }
 
 const today = new Date().toISOString().slice(0, 10);
@@ -78,16 +66,6 @@ const initialFilters: TransactionFilters = {
   accountId: "",
 };
 
-function buildQueryString(filters: TransactionFilters): string {
-  const params = new URLSearchParams();
-  if (filters.from) params.set("from", filters.from);
-  if (filters.to) params.set("to", filters.to);
-  if (filters.type) params.set("type", filters.type);
-  if (filters.categoryId) params.set("category_id", filters.categoryId);
-  if (filters.accountId) params.set("account_id", filters.accountId);
-  return params.toString();
-}
-
 function normalizeNullable(value: string): string | null {
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
@@ -105,25 +83,33 @@ function toPayload(form: TransactionFormState): TransactionPayload {
 }
 
 export function TransactionsClient() {
+  const { session } = useAuth();
+
+  return <TransactionsClientContent key={session?.user.id ?? "development-user"} />;
+}
+
+function TransactionsClientContent() {
   const queryClient = useQueryClient();
   const router = useRouter();
   const { configured, loading: authLoading, session } = useAuth();
   const [form, setForm] = useState<TransactionFormState>(initialFormState);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [filters, setFilters] = useState<TransactionFilters>(initialFilters);
+  const [ruleOffer, setRuleOffer] = useState<RuleOffer | null>(null);
+  const [ruleError, setRuleError] = useState<string | null>(null);
   const userId = session?.user.id ?? "development-user";
   const enabled = !configured || Boolean(session);
+  const transactionsKey = transactionQueryKey(userId, filters);
+  const transactionPrefix = ["transactions", userId] as const;
 
   const transactionsQuery = useQuery({
-    queryKey: ["transactions", userId, filters],
+    queryKey: transactionsKey,
     enabled,
-    queryFn: async () => {
-      const queryString = buildQueryString(filters);
-      const response = await requestJson<TransactionListResponse>(
-        `/transactions${queryString ? `?${queryString}` : ""}`,
-      );
-      return response.items;
-    },
+    queryFn: () => listTransactions(filters),
+    refetchInterval: (query) =>
+      query.state.data?.some((item) => item.categorization_status === "pending")
+        ? 1500
+        : false,
   });
 
   const categoriesQuery = useQuery({
@@ -139,38 +125,63 @@ export function TransactionsClient() {
   });
 
   const saveMutation = useMutation({
-    mutationFn: async ({
+    mutationFn: ({
       transactionId,
       payload,
     }: {
       transactionId?: string;
       payload: TransactionPayload;
-    }) => {
-      const path = transactionId ? `/transactions/${transactionId}` : "/transactions";
-      const method = transactionId ? "PUT" : "POST";
-      return requestJson<Transaction>(path, {
-        method,
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-    },
-    onSuccess: async () => {
+      originalTransaction?: Transaction;
+    }) => saveTransaction(transactionId, payload),
+    onSuccess: async (_savedTransaction, variables) => {
+      const original = variables.originalTransaction;
+      const keyword = original?.description
+        ? suggestRuleKeyword(original.description)
+        : "";
+      if (
+        original &&
+        (original.category_source === "rule" || original.category_source === "openai") &&
+        variables.payload.category_id !== original.category_id &&
+        variables.payload.category_id &&
+        keyword
+      ) {
+        setRuleError(null);
+        setRuleOffer({ keyword, categoryId: variables.payload.category_id });
+      }
       setForm(initialFormState);
       setEditingTransaction(null);
-      await queryClient.invalidateQueries({ queryKey: ["transactions", userId] });
+      await queryClient.invalidateQueries({ queryKey: transactionPrefix });
     },
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (transactionId: string) => {
-      await requestJson<null>(`/transactions/${transactionId}`, {
-        method: "DELETE",
-      });
-    },
+    mutationFn: (transactionId: string) => deleteTransaction(transactionId),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["transactions", userId] });
+      await queryClient.invalidateQueries({ queryKey: transactionPrefix });
+    },
+  });
+
+  const retryMutation = useMutation({
+    mutationFn: (transactionId: string) => retryCategorization(transactionId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: transactionPrefix });
+    },
+  });
+
+  const createRuleMutation = useMutation({
+    mutationFn: (offer: RuleOffer) =>
+      createCategorizationRule({
+        keyword: offer.keyword.trim(),
+        category_id: offer.categoryId,
+        enabled: true,
+      }),
+    onSuccess: async () => {
+      setRuleOffer(null);
+      setRuleError(null);
+      await queryClient.invalidateQueries({
+        queryKey: categorizationRuleQueryKey(userId),
+        exact: true,
+      });
     },
   });
 
@@ -191,7 +202,9 @@ export function TransactionsClient() {
         ? saveMutation.error.message
         : deleteMutation.error instanceof Error
           ? deleteMutation.error.message
-          : null;
+          : retryMutation.error instanceof Error
+            ? retryMutation.error.message
+            : null;
   const resourceErrorMessage =
     categoriesQuery.error instanceof Error
       ? categoriesQuery.error.message
@@ -250,6 +263,7 @@ export function TransactionsClient() {
       await saveMutation.mutateAsync({
         transactionId: editingTransaction?.id,
         payload: toPayload(form),
+        originalTransaction: editingTransaction ?? undefined,
       });
     } catch {
       // Mutation state already feeds the error banner.
@@ -264,6 +278,29 @@ export function TransactionsClient() {
       }
     } catch {
       // Mutation state already feeds the error banner.
+    }
+  }
+
+  async function handleRetry(transactionId: string) {
+    try {
+      await retryMutation.mutateAsync(transactionId);
+    } catch {
+      // Mutation state already feeds the error banner.
+    }
+  }
+
+  async function handleSaveRule(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!ruleOffer?.keyword.trim()) {
+      setRuleError("Enter a keyword.");
+      return;
+    }
+
+    setRuleError(null);
+    try {
+      await createRuleMutation.mutateAsync(ruleOffer);
+    } catch (error) {
+      setRuleError(error instanceof Error ? error.message : "Could not save the rule.");
     }
   }
 
@@ -405,9 +442,12 @@ export function TransactionsClient() {
                   </thead>
                   <tbody>
                     {items.map((item) => {
-                      const categoryLabel = item.category_id
-                        ? categoryNames.get(item.category_id) ?? "Unavailable category"
-                        : "Uncategorized";
+                      const categoryLabel =
+                        item.categorization_status === "pending"
+                          ? "Categorizing…"
+                          : item.category_id
+                            ? categoryNames.get(item.category_id) ?? "Unavailable category"
+                            : "Uncategorized";
                       const accountLabel = item.account_id
                         ? accountNames.get(item.account_id) ?? "Unavailable account"
                         : "No account";
@@ -416,7 +456,21 @@ export function TransactionsClient() {
                         <tr key={item.id}>
                           <td>{item.date}</td>
                           <td>{item.description ?? "—"}</td>
-                          <td>{categoryLabel}</td>
+                          <td>
+                            <span>{categoryLabel}</span>
+                            {item.category_source === "rule" || item.category_source === "openai" ? (
+                              <span
+                                aria-label={
+                                  item.category_source === "rule"
+                                    ? "Automatically categorized by saved rule"
+                                    : "Automatically categorized by OpenAI"
+                                }
+                                className={styles.autoBadge}
+                              >
+                                Auto
+                              </span>
+                            ) : null}
+                          </td>
                           <td>{accountLabel}</td>
                           <td>
                             <span
@@ -431,6 +485,20 @@ export function TransactionsClient() {
                           <td className={styles.amountCol}>{item.amount}</td>
                           <td>
                             <div className={styles.rowActions}>
+                              {item.category_id === null &&
+                              (item.categorization_status === "failed" ||
+                                item.categorization_status === "not_requested") ? (
+                                <Button
+                                  disabled={retryMutation.isPending}
+                                  onClick={() => void handleRetry(item.id)}
+                                  size="sm"
+                                  type="button"
+                                >
+                                  {item.categorization_status === "failed"
+                                    ? "Retry"
+                                    : "Categorize"}
+                                </Button>
+                              ) : null}
                               <Button
                                 onClick={() => startEdit(item)}
                                 size="sm"
@@ -505,7 +573,7 @@ export function TransactionsClient() {
                   value={form.categoryId}
                   onChange={(event) => updateForm("categoryId", event.target.value)}
                 >
-                  <option value="">Uncategorized</option>
+                  <option value="">{isEditing ? "Uncategorized" : "Auto categorize"}</option>
                   {categories.map((category) => (
                     <option key={category.id} value={category.id}>
                       {category.name}
@@ -550,6 +618,46 @@ export function TransactionsClient() {
               </div>
             </form>
           </Card>
+
+          <Modal
+            description="Use this transaction description to categorize similar transactions automatically."
+            onClose={() => setRuleOffer(null)}
+            open={ruleOffer !== null}
+            title="Save this as a rule"
+          >
+            {ruleOffer ? (
+              <form className={styles.ruleForm} onSubmit={handleSaveRule}>
+                <label className={styles.ruleLabel}>
+                  Keyword
+                  <Input
+                    autoFocus
+                    maxLength={120}
+                    value={ruleOffer.keyword}
+                    onChange={(event) =>
+                      setRuleOffer({ ...ruleOffer, keyword: event.target.value })
+                    }
+                  />
+                </label>
+                <p className={styles.helper}>
+                  Category: {categoryNames.get(ruleOffer.categoryId) ?? "Selected category"}
+                </p>
+                {ruleError ? <p className={styles.error}>{ruleError}</p> : null}
+                <div className={styles.formActions}>
+                  <Button disabled={createRuleMutation.isPending} type="submit">
+                    {createRuleMutation.isPending ? "Saving rule..." : "Save rule"}
+                  </Button>
+                  <Button
+                    disabled={createRuleMutation.isPending}
+                    onClick={() => setRuleOffer(null)}
+                    type="button"
+                    variant="secondary"
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </form>
+            ) : null}
+          </Modal>
         </>
       ) : null}
     </div>
