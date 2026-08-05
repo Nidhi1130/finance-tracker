@@ -1,0 +1,25 @@
+services:
+  - name: finance-tracker-backend
+    type: web
+    runtime: docker
+    plan: free
+    region: oregon
+    branch: main
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: CATEGORIZATION_PROVIDER
+        value: rules
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_CATEGORIZATION_MODEL
+        sync: false
+      - key: OPENAI_CATEGORIZATION_TIMEOUT_SECONDS
+        sync: false
