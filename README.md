@@ -1,9 +1,14 @@
 # Finance Tracker
 
+[![CI](https://github.com/Nidhi1130/finance-tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/Nidhi1130/finance-tracker/actions/workflows/ci.yml)
+
+**Live demo:** _add the deployed Vercel URL here once Phase 5 deployment is verified_
+
 Finance Tracker is a multi-user personal-finance app built with Next.js,
 FastAPI, PostgreSQL/Supabase, and deterministic smart categorization. It turns
 transactions into period summaries, category breakdowns, cash-flow trends,
-and user-managed automation rules.
+and user-managed automation rules. Sign up, connect your own accounts and
+categories, and see automatic categorization run in the background.
 
 ## Implemented features
 
@@ -17,6 +22,11 @@ and user-managed automation rules.
 
 Smart categorization is rule-only by default and requires no paid provider.
 OpenAI support remains available as an explicit, optional server-side mode.
+
+## Screenshots
+
+_Add screenshots once deployed: dashboard, transactions list, and the rules
+manager are the most representative views._
 
 ## Stack
 
@@ -47,6 +57,7 @@ values needed for the selected setup. Never expose server-side values through a
 | `DATABASE_URL` | Backend PostgreSQL connection string. |
 | `SUPABASE_URL` | Supabase project URL used for JWT issuer/JWKS verification. |
 | `SUPABASE_JWT_SECRET` | Optional legacy/local HS256 verification fallback. |
+| `ALLOWED_ORIGINS` | Comma-separated CORS origins for the backend. Falls back to the local dev origins (ports 3000/3100) when unset; set this to the deployed frontend URL in production. |
 | `CATEGORIZATION_PROVIDER` | `rules` by default; set `openai` only for explicit provider opt-in. |
 | `OPENAI_API_KEY` | Optional server-side key used only in OpenAI mode. |
 | `OPENAI_CATEGORIZATION_MODEL` | Optional OpenAI model override. |
@@ -77,7 +88,9 @@ Requirements: Python 3.12+, `uv`, Node.js/npm, and Docker.
 
 1. Create local environment files from `.env.example`. For real Supabase Auth,
    set `SUPABASE_URL` for FastAPI and the two `NEXT_PUBLIC_SUPABASE_*` values in
-   `frontend/.env.local`.
+   `frontend/.env.local`. With those set, `/signup` and `/login` work against
+   your real Supabase project; without them, the app falls back to an
+   unsigned local dev token and skips Supabase entirely.
 2. Start the local database:
 
    ```bash
@@ -136,9 +149,46 @@ The latest Phase 4 release evidence is recorded in
 `context/feature-specs/06-smart-categorization.md` and
 `context/progress-tracker.md`.
 
+## Architecture
+
+- The frontend never talks to the database directly — it only calls FastAPI,
+  and FastAPI is the only component that talks to Postgres.
+- The authenticated user id always comes from the verified Supabase JWT
+  (`sub` claim), never trusted from the request body or query params.
+- Row Level Security is enabled and forced on every table as defence in
+  depth, scoped by a custom `app.user_id` session variable the backend sets
+  per request — independent of Supabase's native `auth.uid()`.
+- Money is stored as `numeric(12,2)`, never float; amounts are positive and
+  `type` carries direction.
+- Categorization runs as a FastAPI background task so creating a transaction
+  stays fast; rule matching is deterministic and always runs before the
+  optional, explicit-opt-in OpenAI provider.
+- CSS Modules throughout, no component library; charts via Recharts, data
+  fetching via TanStack Query.
+
+See `context/architecture.md` for the full breakdown.
+
+## Deployment
+
+The frontend deploys to [Vercel](https://vercel.com) and the backend to
+[Render](https://render.com) as a Docker web service (see `render.yaml`),
+against a hosted Supabase Postgres database. The backend's CORS origins
+and the frontend's API base URL are wired together via the `ALLOWED_ORIGINS`
+and `NEXT_PUBLIC_API_BASE_URL` environment variables described above.
+
+## License
+
+[MIT](LICENSE)
+
+## Author
+
+Built by [Nidhi1130](https://github.com/Nidhi1130).
+
 ## Current status
 
-Phases 1–4 are implemented: transaction management, categories/accounts,
-dashboard insights, and smart categorization. Deployment and Open Banking are
-future phases. Authenticated browser smoke gaps are kept explicit in the
-progress tracker rather than inferred from automated coverage.
+Phases 0–4 are implemented and merged: transaction management,
+categories/accounts, dashboard insights, and smart categorization. Phase 5
+(sign-up, production deployment, and this README) is in progress. Open
+Banking (Phase 6) remains a future phase. Authenticated browser smoke gaps
+from earlier phases are kept explicit in the progress tracker rather than
+inferred from automated coverage.

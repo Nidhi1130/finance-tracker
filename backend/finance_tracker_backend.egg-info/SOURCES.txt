@@ -31,6 +31,7 @@ tests/test_categories.py
 tests/test_categorization.py
 tests/test_categorization_configuration.py
 tests/test_categorization_rules.py
+tests/test_cors_config.py
 tests/test_dashboard.py
 tests/test_dependencies.py
 tests/test_health.py
